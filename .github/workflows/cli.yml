@@ -1,0 +1,82 @@
+# The rlp CLI test suite on Linux, Windows and macOS, run twice per OS: once
+# against the installed wheel and once against the standalone binary built on
+# that runner. Release builds (release.yml) use the same steps.
+name: cli
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.13"]
+        binary: [true]
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+            binary: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build and install the wheel
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip wheel . --no-deps --wheel-dir dist
+          python -m pip install dist/rlp_cli-*.whl "pytest==9.1.1" go-task-bin
+      - name: Test the installed wheel
+        run: python -m pytest cli/tests -p no:cacheprovider
+      - name: Build the standalone binary
+        if: matrix.binary
+        id: binary
+        run: |
+          python -m pip install "pyinstaller==6.22.3"
+          echo "path=$(python cli/build_binary.py --dist dist | tail -n 1)" >> "$GITHUB_OUTPUT"
+      - name: Test the standalone binary
+        if: matrix.binary
+        env:
+          RLP_BIN: ${{ steps.binary.outputs.path }}
+        run: |
+          "$RLP_BIN" --version
+          python -m pytest cli/tests -p no:cacheprovider
+      - name: Test the install script against a local release
+        if: matrix.binary
+        env:
+          RLP_BIN: ${{ steps.binary.outputs.path }}
+        run: |
+          mkdir fake-release
+          cp "$RLP_BIN" fake-release/
+          python - <<'PY'
+          import hashlib, pathlib
+          d = pathlib.Path("fake-release")
+          lines = [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}" for p in sorted(d.iterdir())]
+          (d / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+          PY
+          python -m http.server 8765 --bind 127.0.0.1 --directory fake-release &
+          sleep 3
+          export RLP_DOWNLOAD_BASE=http://127.0.0.1:8765
+          export RLP_INSTALL_DIR="$RUNNER_TEMP/rlp-bin"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pwsh -NoProfile -File install.ps1
+          else
+            sh install.sh
+            "$RLP_INSTALL_DIR/rlp" --version
+          fi

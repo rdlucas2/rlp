@@ -25,18 +25,18 @@ tasks:
     cmds:
       - '{{.OPA}} check --strict policy'
       - '{{.OPA}} test policy/'
-      - '{{.VENV_PYTHON}} -m pytest schemas/tests tests/policy --junitxml=reports/junit.xml'
+      - '{{.VENV_PYTHON}} -m pytest --junitxml=reports/junit.xml'
 
   test-deps:
     internal: true
-    desc: Create .venv with the test dependencies
+    desc: Create .venv with rlp-cli (editable) and the test dependencies
     sources:
-      - schemas/tests/requirements.txt
+      - pyproject.toml
     generates:
       - '{{.VENV_PYTHON}}'
     cmds:
       - '{{.PYTHON}} -m venv .venv'
-      - '{{.VENV_PYTHON}} -m pip install --quiet --disable-pip-version-check -r schemas/tests/requirements.txt'
+      - '{{.VENV_PYTHON}} -m pip install --quiet --disable-pip-version-check -e ".[test]"'
 
   policy-tools:
     internal: true
@@ -50,9 +50,16 @@ tasks:
       - 'echo "Nothing to build yet"'
 
   package:
-    desc: Produce the declared artifacts
+    desc: Build the rlp-cli wheel and sdist into dist/
     cmds:
-      - 'echo "Nothing to package yet"'
+      - uv build --out-dir dist
+
+  binary:
+    desc: Build the standalone rlp binary for this OS into dist/
+    deps: [test-deps]
+    cmds:
+      - '{{.VENV_PYTHON}} -m pip install --quiet --disable-pip-version-check pyinstaller==6.22.3'
+      - '{{.VENV_PYTHON}} cli/build_binary.py'
 
   run:
     desc: Start locally against local backing services
