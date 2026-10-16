@@ -49,10 +49,16 @@ def repo(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fake_trivy(tmp_path: Path, monkeypatch) -> dict:
-    exe = tmp_path / "bin" / "trivy"
-    exe.parent.mkdir()
-    exe.write_text(FAKE_TRIVY.format(python=sys.executable), encoding="utf-8")
-    exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "fake_trivy.py"
+    script.write_text(FAKE_TRIVY.format(python=sys.executable), encoding="utf-8")
+    if sys.platform == "win32":  # Windows runs .cmd files, not shebang scripts
+        exe = bin_dir / "trivy.cmd"
+        exe.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+    else:
+        exe = script
+        exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
     log = tmp_path / "trivy.log"
     log.write_text("", encoding="utf-8")
     report = tmp_path / "report.json"
