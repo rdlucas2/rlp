@@ -21,8 +21,6 @@ jobs:
       contents: write          # publish: attach zips and jars to GitHub Releases
       packages: write          # publish: push images to GHCR
       security-events: write   # gates: upload SARIF to code scanning
-    secrets:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}   # optional; without it the sonar stage is skipped
 ```
 
 | Input | Default | Meaning |
@@ -34,11 +32,8 @@ jobs:
 | `working-directory` | `.` | Where the project's `rlp.yaml` lives inside the checkout |
 | `python-version` | `3.13` | Python used to run rlp |
 | `publish` | `true` | Publish artifacts on pushes to the default branch and on tags |
-| `sonar-host-url` | `""` | Sonar server; empty means SonarQube Cloud |
-| `sonar-organization` | `""` | SonarQube Cloud organization; empty means the repo owner |
-| `sonar-project-key` | `""` | Sonar project key; empty means `<owner>_<repo>` |
 
-The scanners and their settings are described in [quality-gates.md](quality-gates.md).
+The workflow sets `RLP_BASELINE` to the PR's base commit (or the commit before a push), so "new code" means what the PR or push changed. The scanners, the baseline and their settings are described in [quality-gates.md](quality-gates.md).
 
 Pin both the workflow ref and `rlp-version`. Third-party actions inside the workflow are pinned by commit SHA.
 
@@ -54,8 +49,9 @@ The gates run in this order and stop at the first failure (`rlp pipeline stages`
 | `setup` | the setup verb, per component | a component's setup fails |
 | `lint` | the lint verb, per component | lint fails |
 | `test` | the test verb, per component | a test fails |
-| `coverage` | each declared coverage report, in its native format | line coverage is below `quality.coverage.minimum`, or the platform floor when unset |
-| `sonar` | Sonar analysis with the quality gate | the quality gate fails; skipped when `SONAR_TOKEN` is unset |
+| `coverage` | each declared coverage report, in its native format, overall and on new code (diff-cover) | line coverage, or coverage of the changed lines, is below `quality.coverage.minimum` (or the platform floor when unset) |
+| `sast` | Opengrep with the rules for each component's language | an ERROR or WARNING finding is new since the baseline commit |
+| `sonar` | optional SonarQube analysis on your machine; not run by the workflow | the quality gate fails; skipped when `SONAR_TOKEN` is unset |
 | `package` | the package verb, per component | packaging fails |
 | `trivy` | Trivy scan of dependencies and each built image | a HIGH or CRITICAL vulnerability has a fix and no unexpired exception in `.rlp/vex.yaml` |
 | `terraform` | Terraform plan checked by OPA | wired in #16; skipped until then |
@@ -110,6 +106,6 @@ Under `act`, the deploy stage stays skipped unless the caller sets `deploy-local
 | SARIF upload to code scanning | skipped: act has no code scanning API | none: the reports stay in `.rlp/pipeline/reports/` |
 | GitHub OIDC (`id-token: write`) | not available | the AWS deploy (#16) can't run; use `deploy-local` |
 | `actions/cache` | ephemeral per run | none, only speed |
-| Runner image | `catthehacker/ubuntu:act-latest`, not the real `ubuntu-latest` | tool versions can differ; rlp pins conftest, OPA, gitleaks and Trivy itself |
+| Runner image | `catthehacker/ubuntu:act-latest`, not the real `ubuntu-latest` | tool versions can differ; rlp pins conftest, OPA, gitleaks, Trivy and Opengrep itself |
 
 The package stage needs Docker. act mounts the host's Docker socket, so image builds work as long as Docker runs locally.

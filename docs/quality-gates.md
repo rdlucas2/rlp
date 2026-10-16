@@ -1,71 +1,66 @@
-# Quality gates: Sonar, Trivy, gitleaks
+# Quality gates: Opengrep, diff-cover, Trivy, gitleaks
 
-Three scanners gate every rlp repo inside the [golden pipeline](pipeline.md). Each runs from the `rlp` CLI, so `rlp pipeline run` on a laptop gives the same result as CI, and each leaves a machine-readable report in `.rlp/pipeline/` for agents (slice 1's remediation loops use them as verifiers). See #14.
+These scanners gate every rlp repo inside the [golden pipeline](pipeline.md). None of them needs an account or a server. Each runs from the `rlp` CLI, so `rlp pipeline run` on a laptop gives the same result as CI. Each leaves a machine-readable report in `.rlp/pipeline/` for agents; slice 1's remediation loops use these reports as verifiers. See #14.
 
 | Gate | Stage | Fails when | Reports |
 | --- | --- | --- | --- |
 | gitleaks | `precommit` | a secret is found anywhere in git history | `reports/gitleaks.sarif`, findings in `results.json` |
-| Sonar | `sonar` | the Sonar quality gate fails | the Sonar dashboard; properties in `results.json` |
+| coverage (overall) | `coverage` | line coverage is below the declared minimum | `results.json` |
+| coverage (new code) | `coverage` | lines changed since the baseline are covered below the declared minimum | `results.json`, with uncovered lines per file |
+| Opengrep | `sast` | an ERROR or WARNING finding is new since the baseline | `reports/opengrep.{json,sarif}` |
 | Trivy | `trivy` | a vulnerability at HIGH or above has a fix and no unexpired VEX exception | `reports/trivy-fs.{json,sarif}`, `reports/trivy-image-<component>.{json,sarif}` |
+| SonarQube (optional) | `sonar` | the Sonar quality gate fails; skipped without `SONAR_TOKEN`, and never run in CI | your SonarQube dashboard |
 
-Paths are relative to `.rlp/pipeline/`. The golden workflow uploads every SARIF file to GitHub code scanning (each with its own category) and attaches the reports to the `rlp-gate-results` artifact.
+Report paths are relative to `.rlp/pipeline/`. The golden workflow uploads every SARIF file to GitHub code scanning, each with its own category, and attaches the reports to the `rlp-gate-results` artifact.
 
-## gitleaks
+## New code and the baseline commit
 
-The pinned gitleaks CLI (`rlp_cli/tools.py`) runs in two places:
+"New" means changed since the **baseline commit**, which is the merge base of `HEAD` and:
 
-- **pre-commit**, as a hook, on staged changes. That's right for local commits.
-- **the `precommit` stage**, over the full git history, so a secret committed and later deleted still fails.
+- `$RLP_BASELINE`, when it is set. `golden.yml` sets it to the pull request's base commit, or to the commit before a push. Empty or all zeros, as on the first push of a branch, means there is no baseline.
+- otherwise the remote's default branch (`origin/HEAD`, then `origin/main`), so a local run measures the same change a PR would.
 
-rlp uses the CLI rather than the gitleaks GitHub Action, which needs a `GITLEAKS_LICENSE` key for repos owned by an organization (free, but a sign-up).
+With no baseline, the whole repo counts as new. `sast` then reports every finding, and the new-code coverage check is skipped. The baseline must be in the clone, so CI checks out with `fetch-depth: 0`.
 
-## Sonar
+## Coverage on new code (diff-cover)
 
-`rlp` maps each component's native coverage report to the Sonar property that reads it, so templates never carry Sonar configuration:
+[diff-cover](https://github.com/Bachmann1234/diff_cover) (Apache-2.0) is a Python dependency of rlp. It reads each component's native coverage report and measures the lines changed since the baseline. The minimum is the same one the overall check uses: `quality.coverage.minimum`, or the platform floor when the repo sets none. So each repo's own declared minimum applies to its new code.
 
-| `reports.coverage.format` | Sonar property |
+| `reports.coverage.format` | New-code check |
 | --- | --- |
-| `cobertura` | `sonar.python.coverage.reportPaths` |
-| `lcov` | `sonar.javascript.lcov.reportPaths` |
-| `jacoco` | `sonar.coverage.jacoco.xmlReportPaths` |
-| `opencover` | `sonar.cs.opencover.reportsPaths` |
+| `cobertura`, `jacoco`, `lcov` | supported |
+| `opencover` | skipped with a note: diff-cover can't read it. .NET templates should emit Cobertura (coverlet does). |
 
-The scanner is [pysonar](https://pypi.org/project/pysonar/) (pinned in `golden.yml`), which provisions its own JRE. It runs with `sonar.qualitygate.wait=true`, so the scanner's exit code is the gate.
+A change with no measured lines, such as docs or tests only, passes.
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `SONAR_TOKEN` | none | Analysis token. Without it the stage is **skipped** and says so; it never passes silently |
-| `SONAR_HOST_URL` | `https://sonarcloud.io` | SonarQube Cloud, or a self-hosted server |
-| `SONAR_ORGANIZATION` | the GitHub owner | SonarQube Cloud organization |
-| `SONAR_PROJECT_KEY` | `<owner>_<repo>` | The key SonarQube Cloud gives an imported GitHub repo |
+## Static analysis (Opengrep)
 
-In the golden workflow these come from the `SONAR_TOKEN` secret and the `sonar-host-url`, `sonar-organization` and `sonar-project-key` inputs.
+[Opengrep](https://github.com/opengrep/opengrep) is an open fork of Semgrep CE (LGPL-2.1), with the same rule format. rlp pins two things:
 
-### The "rlp default" quality gate
+- the Opengrep binary, which rlp checksum-verifies;
+- a commit of [opengrep-rules](https://github.com/opengrep/opengrep-rules), which rlp fetches with git.
 
-| Condition (on new code) | Fails when |
-| --- | --- |
-| Issues | more than 0 |
-| Line coverage | below the platform floor (`coverage_floor` in `policy/platform/data.yaml`) |
+**Rule selection.** The rule directories follow each component's `language`. For example, `python` maps to `python/`, and `typescript` maps to `typescript/` and `javascript/`. Other languages use the directory of the same name. Every repo also gets `dockerfile/` and `yaml/github-actions/`. Rules under `audit/` are left out, because they flag patterns for manual review, not defects.
 
-A Sonar quality gate is server-side and shared, so it can't read each repo's `quality.coverage.minimum`. The `coverage` stage enforces the declared minimum on overall coverage; Sonar's gate covers new code.
+**What fails.** A finding with severity ERROR or WARNING that is new since the baseline.
 
-### Free-tier terms (checked 2026-10-16)
+**Suppressions.** A `# nosemgrep` comment silences one finding. Like VEX exceptions, suppressions are quality-gate configuration, and agent-authored changes may not add them.
 
-- **SonarQube Cloud, Free plan:** unlimited public projects; private projects up to 50k lines of code per organization; at most 5 members. Only the main branch is analysed, and pull requests only when they target the main branch. **Custom quality gates are not included** (Team plan and above), so on the Free plan "rlp default" can't be created and projects use the built-in "Sonar way" gate, which already fails on any new issue and on new-code coverage below 80%. [Subscription plans](https://docs.sonarsource.com/sonarcloud/administering-sonarcloud/managing-subscription/subscription-plans).
-- **SonarQube Community Build (self-hosted fallback):** free, and allows custom quality gates, so "rlp default" can be created there. It analyses a single branch only: no branch analysis, no pull request analysis or decoration (Developer Edition and above). Use it for local and private work, and expect it to judge the main branch, not a PR. Point `SONAR_HOST_URL` at it.
-- **Trivy:** Apache-2.0, no account. It downloads its vulnerability database from `mirror.gcr.io` (then `ghcr.io`), which can rate-limit busy runners.
-- **gitleaks:** MIT CLI, no account. Only the GitHub Action needs a licence key (for organizations).
-- **GitHub code scanning (SARIF upload):** available on public repositories. Private and internal repositories need GitHub Code Security. Two SARIF runs from the same tool need distinct categories, which rlp sets.
+**Licences and limits.**
+- The opengrep-rules repo is the Semgrep rules as of their December 2024 licence change: LGPL-2.1 with the Commons Clause, which forbids selling the rules. rlp doesn't sell them.
+- The rules repo has had few updates since the fork. Newer rules can be added as rlp's own rules later.
+- Cross-file (taint) analysis isn't in Opengrep, as it isn't in Semgrep CE.
+
+Code smells and complexity come from each template's `lint` verb (for example ruff for Python), which the `lint` stage already gates.
 
 ## Trivy
 
-The pinned Trivy (`rlp_cli/tools.py`, installed on first use) scans:
+The pinned Trivy (installed on first use) scans:
 
 1. the repo's dependencies: `trivy fs` at the repo root;
 2. each `container-image` component's image, as built by the package stage: `trivy image <metadata.name>-<component>:<version>`.
 
-Both use `--scanners vuln --severity HIGH,CRITICAL --ignore-unfixed`. Any finding left after VEX exceptions fails the stage, which lists each one as `CVE (severity) in package installed-version, fixed in fixed-version [target: file]`.
+Both use `--scanners vuln --severity HIGH,CRITICAL --ignore-unfixed`. Any finding left after VEX exceptions fails the stage. The stage lists each finding as `CVE (severity) in package installed-version, fixed in fixed-version [target: path]`.
 
 ### VEX exceptions
 
@@ -79,6 +74,56 @@ exceptions:
     expires: "2026-12-31"
 ```
 
-- An unexpired exception lets its CVE pass the trivy stage; the finding stays in the report, marked with the reason.
-- An expired exception stops covering its CVE, and the policy stage fails on it (`RLP-L005`). So does an exception without a reason (`RLP-L003`) or a valid expiry (`RLP-L004`).
-- Exceptions are a quality gate's configuration: agent-authored changes may not add or extend them.
+- An unexpired exception lets its CVE pass the trivy stage. The finding stays in the report, marked with the reason.
+- An expired exception stops covering its CVE, and the policy stage fails on it (`RLP-L005`).
+- The policy stage also fails on an exception without a reason (`RLP-L003`) or without a valid expiry (`RLP-L004`).
+- Agent-authored changes may not add or extend exceptions.
+
+## gitleaks
+
+The pinned gitleaks CLI runs in two places:
+
+- **pre-commit**, as a hook, on staged changes. That's right for local commits.
+- **the `precommit` stage**, over the full git history, so a secret committed and later deleted still fails.
+
+rlp uses the CLI rather than the gitleaks GitHub Action, which needs a `GITLEAKS_LICENSE` key for repos owned by an organization.
+
+## Optional: SonarQube on your machine
+
+The `sonar` stage is for people who want Sonar's dashboard and history as well. It never gates CI, because the golden workflow doesn't run it. It runs only when `SONAR_TOKEN` is set.
+
+```sh
+docker run -d --name sonarqube -p 9000:9000 sonarqube:community   # SonarQube Community Build
+# open http://localhost:9000, create a project and a token, then:
+pip install pysonar
+SONAR_TOKEN=<token> rlp pipeline run -s test -s sonar
+```
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SONAR_TOKEN` | none | Analysis token; without it the stage is skipped |
+| `SONAR_HOST_URL` | `http://localhost:9000` | Your SonarQube. SonarQube Cloud (`https://sonarcloud.io`) also works |
+| `SONAR_ORGANIZATION` | the GitHub owner | SonarQube Cloud only |
+| `SONAR_PROJECT_KEY` | `metadata.project` (in Actions: `<owner>_<repo>`) | The Sonar project |
+
+rlp maps each native coverage format to the Sonar property that reads it, so templates carry no Sonar configuration:
+
+| `reports.coverage.format` | Sonar property |
+| --- | --- |
+| `cobertura` | `sonar.python.coverage.reportPaths` |
+| `lcov` | `sonar.javascript.lcov.reportPaths` |
+| `jacoco` | `sonar.coverage.jacoco.xmlReportPaths` |
+| `opencover` | `sonar.cs.opencover.reportsPaths` |
+
+Community Build analyses a single branch, so each local run replaces the last one. That's fine for a personal dashboard, which is all this stage is for.
+
+## Free-tier terms (checked 2026-10-16)
+
+| Tool | Licence | Account | Notes |
+| --- | --- | --- | --- |
+| Opengrep | LGPL-2.1 | none | rules: LGPL-2.1 + Commons Clause |
+| diff-cover | Apache-2.0 | none | Python package |
+| Trivy | Apache-2.0 | none | downloads its DB from `mirror.gcr.io` (then `ghcr.io`), which can rate-limit busy runners |
+| gitleaks | MIT | none | only the GitHub Action needs a licence key, for organizations |
+| GitHub code scanning | n/a | n/a | SARIF upload works on public repos; private repos need GitHub Code Security |
+| SonarQube Community Build (optional) | free | local only | one branch, no PR analysis or decoration |
