@@ -6,6 +6,7 @@ version: "3"
 vars:
   PYTHON: '{{if eq OS "windows"}}python{{else}}python3{{end}}'
   VENV_PYTHON: '{{if eq OS "windows"}}.venv/Scripts/python.exe{{else}}.venv/bin/python{{end}}'
+  OPA: '.tools/bin/opa{{exeExt}}'
 
 tasks:
   setup:
@@ -20,9 +21,11 @@ tasks:
 
   test:
     desc: Run tests and write reports to declared paths
-    deps: [test-deps]
+    deps: [test-deps, policy-tools]
     cmds:
-      - '{{.VENV_PYTHON}} -m pytest schemas/tests --junitxml=reports/junit.xml'
+      - '{{.OPA}} check --strict policy'
+      - '{{.OPA}} test policy/'
+      - '{{.VENV_PYTHON}} -m pytest schemas/tests tests/policy --junitxml=reports/junit.xml'
 
   test-deps:
     internal: true
@@ -34,6 +37,12 @@ tasks:
     cmds:
       - '{{.PYTHON}} -m venv .venv'
       - '{{.VENV_PYTHON}} -m pip install --quiet --disable-pip-version-check -r schemas/tests/requirements.txt'
+
+  policy-tools:
+    internal: true
+    desc: Install the pinned OPA and conftest into .tools/bin
+    cmds:
+      - '{{.PYTHON}} scripts/install_policy_tools.py'
 
   build:
     desc: Compile, if applicable
