@@ -35,10 +35,11 @@ class Finding:
     fixed: str
     severity: str
     title: str
+    path: str = ""  # where the package was found, when Trivy knows (images)
     excepted_by: str | None = None  # the VEX reason when an exception covers it
 
     def line(self) -> str:
-        return f"{self.id} ({self.severity}) in {self.package} {self.installed}, fixed in {self.fixed} [{self.target}: {self.file}]"
+        return f"{self.id} ({self.severity}) in {self.package} {self.installed}, fixed in {self.fixed} [{self.target}: {self.path or self.file}]"
 
 
 def evaluate(report: dict, target: str, exceptions: list[vex.Entry]) -> list[Finding]:
@@ -57,6 +58,7 @@ def evaluate(report: dict, target: str, exceptions: list[vex.Entry]) -> list[Fin
                 fixed=v.get("FixedVersion", ""),
                 severity=v["Severity"],
                 title=v.get("Title", ""),
+                path=v.get("PkgPath", ""),
             )
             cover = next((e for e in exceptions if e.covers(f.id, f.package)), None)
             if cover:
