@@ -3,10 +3,33 @@
 # that runner. Release builds (release.yml) use the same steps.
 name: cli
 
+# Only for changes that can affect the CLI: its code, what the wheel packages
+# (schemas, policy), the tests it runs, and the installers. Tags build and test
+# the binaries in release.yml, so they need no trigger here.
 on:
   pull_request:
+    paths:
+      - "cli/**"
+      - "schemas/**"
+      - "policy/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "install.sh"
+      - "install.ps1"
+      - ".github/workflows/cli.yml"
   push:
     branches: [main]
+    paths:
+      - "cli/**"
+      - "schemas/**"
+      - "policy/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "install.sh"
+      - "install.ps1"
+      - ".github/workflows/cli.yml"
 
 permissions:
   contents: read
