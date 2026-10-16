@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write  # golden.yml uploads SARIF to code scanning
 
 concurrency:
   group: golden-selftest-${{ github.ref }}
@@ -22,3 +23,5 @@ jobs:
       rlp-version: "path:."
       working-directory: tests/pipeline/fixtures/hello
       publish: false
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
