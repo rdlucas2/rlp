@@ -8,7 +8,7 @@ Work is tracked in [GitHub Issues](https://github.com/rdlucas2/rlp/issues), orga
 
 | Path | What lives there |
 | --- | --- |
-| `cli/` | The `rlp` CLI (Python + Click) |
+| `cli/` | The `rlp` CLI (Python + Click); install and usage in [cli/README.md](cli/README.md) |
 | `schemas/` | JSON Schemas for the contract files |
 | `policy/` | OPA/Rego policy bundle |
 | `platform/` | Platform API, state store and UI |
