@@ -46,12 +46,15 @@ on:
         type: boolean
         default: true
 
-permissions:
-  contents: read
+# No workflow-level permissions: a called workflow may not ask for more than
+# its caller grants, even for a job that ends up skipped. The gates job drops to
+# read-only below; the publish job inherits what the caller grants.
 
 jobs:
   gates:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         shell: bash
@@ -125,9 +128,7 @@ jobs:
       inputs.publish && github.event_name == 'push' &&
       (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/'))
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
+    # Inherits the caller's grant: contents: write (releases), packages: write (GHCR).
     defaults:
       run:
         shell: bash
