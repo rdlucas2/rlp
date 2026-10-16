@@ -3,6 +3,10 @@
 # explicit no-ops so the contract holds from day one.
 version: "3"
 
+vars:
+  PYTHON: '{{if eq OS "windows"}}python{{else}}python3{{end}}'
+  VENV_PYTHON: '{{if eq OS "windows"}}.venv/Scripts/python.exe{{else}}.venv/bin/python{{end}}'
+
 tasks:
   setup:
     desc: Install dependencies and git hooks
@@ -16,8 +20,20 @@ tasks:
 
   test:
     desc: Run tests and write reports to declared paths
+    deps: [test-deps]
     cmds:
-      - 'echo "No tests yet; the CLI adds them in #11"'
+      - '{{.VENV_PYTHON}} -m pytest schemas/tests --junitxml=reports/junit.xml'
+
+  test-deps:
+    internal: true
+    desc: Create .venv with the test dependencies
+    sources:
+      - schemas/tests/requirements.txt
+    generates:
+      - '{{.VENV_PYTHON}}'
+    cmds:
+      - '{{.PYTHON}} -m venv .venv'
+      - '{{.VENV_PYTHON}} -m pip install --quiet --disable-pip-version-check -r schemas/tests/requirements.txt'
 
   build:
     desc: Compile, if applicable
