@@ -1,0 +1,128 @@
+# Policy bundle fixtures. Each case is a directory under fixtures/, checked with
+# conftest --combine from that directory. `expect` lists every rule id the case
+# must fail, and only those. `copy` adds repo files before the check;
+# `namespaces` limits the check (default: all namespaces).
+cases:
+  slice0-app:
+    description: The slice-0 example rlp.yaml in a complete app repo passes every
+      rule.
+    copy:
+      rlp.yaml: examples/rlp.yaml
+    expect: []
+  slice0-template:
+    description: The slice-0 example rlp-template.yaml in a template repo passes every
+      rule.
+    copy:
+      rlp-template.yaml: examples/rlp-template.yaml
+    expect: []
+  terraform-compliant:
+    description: A tagged, private, encrypted plan passes the Terraform rules.
+    namespaces:
+      - rlp.terraform
+    expect: []
+  p001-missing-rlp-yaml:
+    description: An app repo with no rlp.yaml.
+    expect:
+      - RLP-P001
+  p002-missing-taskfile:
+    description: rlp.yaml without a Taskfile at the root.
+    expect:
+      - RLP-P002
+  p003-missing-copier-answers:
+    description: metadata.template is set but .copier-answers.yml is missing.
+    expect:
+      - RLP-P003
+  p004-copier-without-rlp-template:
+    description: A Copier template repo with no rlp-template.yaml.
+    expect:
+      - RLP-P004
+  p005-missing-conformance-answers:
+    description: rlp-template.yaml without conformance.answers.
+    expect:
+      - RLP-P005
+  p006-answers-file-missing:
+    description: conformance.answers names a file that is not in the repo.
+    expect:
+      - RLP-P006
+  s001-unknown-api-version:
+    description: apiVersion is not rlp/v1alpha1.
+    expect:
+      - RLP-S001
+  s002-wrong-kind:
+    description: rlp.yaml declares kind Template.
+    expect:
+      - RLP-S002
+  s003-missing-project:
+    description: metadata.project is missing.
+    expect:
+      - RLP-S003
+  s004-unknown-runtime-kind:
+    description: runtime.kind is not a known runtime.
+    expect:
+      - RLP-S004
+  s005-function-without-handler:
+    description: A function runtime without a handler.
+    expect:
+      - RLP-S005
+  x001-taskfile-missing-verb:
+    description: The Taskfile lacks the smoke task the component relies on.
+    expect:
+      - RLP-X001
+  x002-component-dir-without-taskfile:
+    description: A component in api/ with no api/Taskfile.yml.
+    expect:
+      - RLP-X002
+  x003-unknown-service:
+    description: config.from names a service the component does not declare.
+    expect:
+      - RLP-X003
+  x004-duplicate-component:
+    description: Two components share a name.
+    expect:
+      - RLP-X004
+  l001-coverage-below-floor:
+    description: quality.coverage.minimum is below the platform floor.
+    expect:
+      - RLP-L001
+  l002-secret-with-default:
+    description: A secret config entry carries a default.
+    expect:
+      - RLP-L002
+  l003-vex-missing-reason:
+    description: A VEX exception with no reason.
+    expect:
+      - RLP-L003
+  l004-vex-missing-expiry:
+    description: A VEX exception with no expiry date.
+    expect:
+      - RLP-L004
+  l005-vex-expired:
+    description: A VEX exception whose expiry date has passed.
+    expect:
+      - RLP-L005
+  t001-missing-tags:
+    description: A database without the required tags.
+    namespaces:
+      - rlp.terraform
+    expect:
+      - RLP-T001
+  t002-bucket-without-access-block:
+    description: An S3 bucket with no public access block.
+    namespaces:
+      - rlp.terraform
+    expect:
+      - RLP-T002
+  t003-unencrypted-database:
+    description: A database without storage encryption.
+    namespaces:
+      - rlp.terraform
+    expect:
+      - RLP-T003
+  d001-latest-base-image:
+    description: The base image uses the latest tag.
+    expect:
+      - RLP-D001
+  d002-root-user:
+    description: The final stage runs as root.
+    expect:
+      - RLP-D002

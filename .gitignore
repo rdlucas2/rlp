@@ -10,8 +10,9 @@ build/
 coverage.xml
 reports/
 
-# go-task checksums
+# go-task checksums and pinned tool downloads
 .task/
+.tools/
 
 # rlp generated local state (compose files, .env, loop state)
 .rlp/*

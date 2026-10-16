@@ -1,0 +1,30 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.13.0",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.assets",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "assets",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "bucket": "fixture-assets",
+          "tags": null,
+          "tags_all": {
+            "rlp:project": "fixture",
+            "rlp:environment": "dev",
+            "rlp:managed-by": "terraform"
+          }
+        },
+        "after_unknown": {
+          "arn": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Platform settings the policy bundle reads as data.platform. Changing a value
+# here changes the gate for every repo, so it goes through review like code.
+
+# Lowest quality.coverage.minimum a repo may declare (percent).
+coverage_floor: 70
+
+# Tags every taggable AWS resource in a Terraform plan must carry.
+required_tags:
+  - rlp:project
+  - rlp:environment
+  - rlp:managed-by

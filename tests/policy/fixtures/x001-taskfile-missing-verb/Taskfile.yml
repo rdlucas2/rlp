@@ -1,0 +1,20 @@
+version: '3'
+tasks:
+  setup:
+    cmds:
+      - echo setup
+  lint:
+    cmds:
+      - echo lint
+  test:
+    cmds:
+      - echo test
+  build:
+    cmds:
+      - echo build
+  package:
+    cmds:
+      - echo package
+  run:
+    cmds:
+      - echo run
