@@ -1,0 +1,7 @@
+# Invalid: components is required.
+# expect-error: (root)
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture

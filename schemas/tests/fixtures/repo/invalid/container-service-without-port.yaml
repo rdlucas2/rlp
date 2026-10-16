@@ -1,0 +1,14 @@
+# Invalid: a container-service needs a port.
+# expect-error: /components/0/runtime
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: container-service

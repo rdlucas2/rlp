@@ -1,0 +1,15 @@
+# Invalid: artifact kind is not in the enum.
+# expect-error: /components/0/artifact/kind
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: wheel
+    runtime:
+      kind: container-service
+      port: 8000

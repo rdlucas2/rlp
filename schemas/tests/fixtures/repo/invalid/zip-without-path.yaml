@@ -1,0 +1,15 @@
+# Invalid: a zip artifact needs a path.
+# expect-error: /components/0/artifact
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: zip
+    runtime:
+      kind: function
+      handler: app.handler

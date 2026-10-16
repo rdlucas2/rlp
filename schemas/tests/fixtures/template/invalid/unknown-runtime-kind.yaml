@@ -1,0 +1,14 @@
+# Invalid: runtime kind is not in the enum.
+# expect-error: /produces/components/0/runtime
+apiVersion: rlp/v1alpha1
+kind: Template
+metadata:
+  name: fixture
+  version: 0.1.0
+produces:
+  components:
+    - language: python
+      artifact: container-image
+      runtime: vm
+conformance:
+  answers: tests/default-answers.yml

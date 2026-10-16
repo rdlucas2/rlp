@@ -1,0 +1,17 @@
+# Invalid: deploy is not a standard verb.
+# expect-error: /conformance/verbs/1
+apiVersion: rlp/v1alpha1
+kind: Template
+metadata:
+  name: fixture
+  version: 0.1.0
+produces:
+  components:
+    - language: python
+      artifact: container-image
+      runtime: container-service
+conformance:
+  answers: tests/default-answers.yml
+  verbs:
+    - test
+    - deploy

@@ -1,0 +1,15 @@
+# Invalid: a function needs a handler.
+# expect-error: /components/0/runtime
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: zip
+      path: dist/fn.zip
+    runtime:
+      kind: function

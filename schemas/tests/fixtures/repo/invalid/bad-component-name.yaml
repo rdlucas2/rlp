@@ -1,0 +1,15 @@
+# Invalid: component name is not a DNS label.
+# expect-error: /components/0/name
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: My_API
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: container-service
+      port: 8000

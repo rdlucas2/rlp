@@ -1,0 +1,8 @@
+# Invalid: components needs at least one entry.
+# expect-error: /components
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components: []

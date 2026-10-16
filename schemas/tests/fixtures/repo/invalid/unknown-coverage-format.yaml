@@ -1,0 +1,19 @@
+# Invalid: coverage format is not in the enum.
+# expect-error: /components/0/reports/coverage/format
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: container-service
+      port: 8000
+    reports:
+      coverage:
+        format: clover
+        path: coverage.xml
