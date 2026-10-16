@@ -18,7 +18,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from rlp_cli import contract, coverage, policy, secrets, verbs
+from rlp_cli import baseline, contract, coverage, policy, sast, secrets, sonar, trivy, verbs, vex
 
 # (stage, what it gates). Order is the pipeline order.
 STAGES = [
@@ -28,15 +28,18 @@ STAGES = [
     ("setup", "the setup verb, per component (installs what lint and test need)"),
     ("lint", "the lint verb, per component"),
     ("test", "the test verb, per component"),
-    ("coverage", "line coverage against the declared minimum"),
-    ("sonar", "Sonar quality gate (#14)"),
+    ("coverage", "line coverage, overall and on new code, against the declared minimum"),
+    ("sast", "Semgrep static analysis: no new findings"),
+    ("sonar", "optional local SonarQube analysis; skipped without SONAR_TOKEN"),
     ("package", "the package verb, per component"),
-    ("trivy", "Trivy vulnerability scan (#14)"),
+    ("trivy", "Trivy scan of dependencies and built images"),
     ("terraform", "Terraform plan checked by OPA (#16)"),
     ("deploy", "deploy to the target environment (#16)"),
 ]
 STAGE_NAMES = [name for name, _ in STAGES]
 RESULTS = Path(".rlp") / "pipeline" / "results.json"
+# SARIF and JSON reports from the scanners, uploaded to code scanning by golden.yml.
+REPORTS = Path(".rlp") / "pipeline" / "reports"
 
 
 @dataclass
@@ -77,10 +80,11 @@ def stage_precommit(ctx: Context) -> StageResult:
         notes.append("pre-commit hooks passed")
     else:
         notes.append("no .pre-commit-config.yaml")
-    findings = secrets.scan(ctx.root)
+    sarif = REPORTS / "gitleaks.sarif"
+    findings = secrets.scan(ctx.root, sarif=ctx.root / sarif)
     if findings:
         where = ", ".join(sorted({f"{f['file']}:{f['line']}" for f in findings}))
-        return StageResult("precommit", "failed", f"gitleaks found {len(findings)} secret(s): {where}", data={"findings": findings})
+        return StageResult("precommit", "failed", f"gitleaks found {len(findings)} secret(s): {where}", data={"findings": findings, "sarif": sarif.as_posix()})
     notes.append("gitleaks: no secrets")
     return StageResult("precommit", "passed", "; ".join(notes))
 
@@ -118,21 +122,58 @@ def run_verb(ctx: Context, verb: str) -> StageResult:
 
 
 def stage_coverage(ctx: Context) -> StageResult:
-    results = coverage.check(ctx.root, ctx.doc(), ctx.components)
+    doc = ctx.doc()
+    results = coverage.check(ctx.root, doc, ctx.components)
     if not results:
         return StageResult("coverage", "skipped", "no component declares a coverage report")
-    per = {r.component: "passed" if r.ok else "failed" for r in results}
-    data = {"results": [r.as_dict() for r in results]}
+    base = baseline.resolve(ctx.root)
+    fresh = coverage.new_code(ctx.root, doc, base, ctx.components)
+    new_ok = {n.component: n.ok for n in fresh}
+    per = {r.component: "passed" if r.ok and new_ok.get(r.component, True) else "failed" for r in results}
+    data = {"results": [r.as_dict() for r in results], "baseline": base, "new_code": [n.as_dict() for n in fresh]}
     parts = [
         f"{r.component} {r.error}" if r.error else f"{r.component} {r.percent:.1f}% (minimum {r.minimum:g}%)"
         for r in results
     ]
-    status = "passed" if all(r.ok for r in results) else "failed"
+    if fresh:
+        parts.append("new code: " + ", ".join(n.text() for n in fresh))
+    status = "passed" if all(v == "passed" for v in per.values()) else "failed"
     return StageResult("coverage", status, "; ".join(parts), components=per, data=data)
 
 
-def stage_pending(name: str, issue: str) -> StageResult:
-    return StageResult(name, "skipped", f"not wired yet ({issue})")
+def stage_sast(ctx: Context) -> StageResult:
+    base = baseline.resolve(ctx.root)
+    report = sast.scan(ctx.root, ctx.doc(), base, ctx.components)
+    since = f"since {base[:12]}" if base else "in the whole repo (no baseline commit)"
+    if report["semgrep"] != report["pinned"]:
+        since += f"; semgrep {report['semgrep']}, rlp pins {report['pinned']}"
+    if report["findings"]:
+        shown = "; ".join(report["lines"][:5]) + ("; ..." if len(report["lines"]) > 5 else "")
+        return StageResult("sast", "failed", f"{len(report['findings'])} new finding(s) {since}: {shown}", data=report)
+    return StageResult("sast", "passed", f"no new findings {since} ({report['rules']} rules: {', '.join(report['rule_dirs'])})", data=report)
+
+
+def stage_sonar(ctx: Context) -> StageResult:
+    if not sonar.configured():
+        return StageResult("sonar", "skipped", "optional; SONAR_TOKEN is not set (see docs/quality-gates.md)")
+    props = sonar.properties(ctx.root, ctx.doc())
+    code = sonar.analyse(ctx.root, ctx.doc(), stream=ctx.stream)
+    data = {"properties": {k: v for k, v in props.items() if k != "sonar.projectBaseDir"}}
+    where = f"{props['sonar.host.url']} project {props['sonar.projectKey']}"
+    if code != 0:
+        return StageResult("sonar", "failed", f"Sonar quality gate failed or analysis errored (exit {code}); see {where}", data=data)
+    return StageResult("sonar", "passed", f"quality gate passed on {where}", data=data)
+
+
+def stage_trivy(ctx: Context) -> StageResult:
+    report = trivy.check(ctx.root, ctx.doc(), ctx.components)
+    excepted = len(report["findings"]) - report["blocking"]
+    targets = ", ".join(s["target"] for s in report["scans"])
+    note = f"; {excepted} covered by .rlp/vex.yaml" if excepted else ""
+    if report["blocking"]:
+        shown = "; ".join(report["lines"][:5]) + ("; ..." if len(report["lines"]) > 5 else "")
+        return StageResult("trivy", "failed", f"{report['blocking']} fixable HIGH or CRITICAL finding(s){note}: {shown}", data=report)
+    return StageResult("trivy", "passed", f"no fixable HIGH or CRITICAL vulnerabilities in {targets}{note}", data=report)
 
 
 def stage_terraform(ctx: Context) -> StageResult:
@@ -154,9 +195,10 @@ RUNNERS = {
     "lint": lambda ctx: run_verb(ctx, "lint"),
     "test": lambda ctx: run_verb(ctx, "test"),
     "coverage": stage_coverage,
-    "sonar": lambda ctx: stage_pending("sonar", "#14"),
+    "sast": stage_sast,
+    "sonar": stage_sonar,
     "package": lambda ctx: run_verb(ctx, "package"),
-    "trivy": lambda ctx: stage_pending("trivy", "#14"),
+    "trivy": stage_trivy,
     "terraform": stage_terraform,
     "deploy": stage_deploy,
 }
@@ -190,7 +232,7 @@ def run(ctx: Context, stages: list[str], reset: bool = False) -> list[StageResul
         start = time.monotonic()
         try:
             result = RUNNERS[name](ctx)
-        except (contract.ContractError, verbs.VerbError, policy.PolicyError, secrets.ScanError, coverage.CoverageError) as err:
+        except (contract.ContractError, verbs.VerbError, policy.PolicyError, secrets.ScanError, coverage.CoverageError, sonar.SonarError, trivy.ScanError, vex.VexError, sast.SastError, baseline.BaselineError) as err:
             result = StageResult(name, "failed", str(err))
         result.seconds = round(time.monotonic() - start, 3)
         ran.append(result)

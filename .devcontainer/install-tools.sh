@@ -9,6 +9,7 @@ TRIVY_VERSION=0.76.0
 GITLEAKS_VERSION=8.30.1
 ACT_VERSION=0.2.89
 TASK_VERSION=3.54.0
+SEMGREP_VERSION=1.179.0
 
 BIN=/usr/local/bin
 GH=https://github.com
@@ -46,7 +47,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 uv tool install pre-commit
 uv tool install copier
+uv tool install "semgrep==${SEMGREP_VERSION}"
 
-for tool in opa conftest trivy gitleaks act task uv pre-commit copier terraform gh docker; do
+for tool in opa conftest trivy gitleaks act task uv pre-commit copier semgrep terraform gh docker; do
   printf '%-11s' "$tool"; command -v "$tool" >/dev/null && echo ok || { echo MISSING; exit 1; }
 done

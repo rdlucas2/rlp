@@ -6,8 +6,9 @@
 #       with:
 #         rlp-version: "0.2.0"
 #       permissions:
-#         contents: write   # publish: attach zips and jars to releases
-#         packages: write   # publish: push images to GHCR
+#         contents: write          # publish: attach zips and jars to releases
+#         packages: write          # publish: push images to GHCR
+#         security-events: write   # gates: upload SARIF to code scanning
 #
 # Every step is a thin wrapper around an `rlp` command; the gate logic lives in
 # the CLI (`rlp pipeline run`), so a laptop, `act` and Actions give the same
@@ -47,14 +48,15 @@ on:
         default: true
 
 # No workflow-level permissions: a called workflow may not ask for more than
-# its caller grants, even for a job that ends up skipped. The gates job drops to
-# read-only below; the publish job inherits what the caller grants.
+# its caller grants, even for a job that ends up skipped. The gates job reads the
+# repo and uploads SARIF; the publish job inherits what the caller grants.
 
 jobs:
   gates:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      security-events: write  # upload the scanners' SARIF to code scanning
     defaults:
       run:
         shell: bash
@@ -64,6 +66,10 @@ jobs:
       RLP_COMPONENTS: ${{ inputs.components }}
       RLP_DEPLOY_ENV: ${{ inputs.deploy-env }}
       RLP_DEPLOY_LOCAL: ${{ inputs.deploy-local }}
+      # New code (sast findings, coverage) is measured from here: the PR's base
+      # commit, or the commit before a push. Empty means the whole repo is new.
+      RLP_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      SEMGREP_VERSION: "1.179.0"  # keep in step with SEMGREP_VERSION in cli/src/rlp_cli/tools.py
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -78,7 +84,7 @@ jobs:
             path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
             *) spec="rlp-cli==${RLP_SPEC}" ;;
           esac
-          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin
+          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin "semgrep==$SEMGREP_VERSION"
           rlp --version
       - name: precommit
         run: rlp pipeline run --reset --stage precommit --component "$RLP_COMPONENTS"
@@ -94,8 +100,8 @@ jobs:
         run: rlp pipeline run --stage test --component "$RLP_COMPONENTS"
       - name: coverage
         run: rlp pipeline run --stage coverage --component "$RLP_COMPONENTS"
-      - name: sonar
-        run: rlp pipeline run --stage sonar --component "$RLP_COMPONENTS"
+      - name: sast
+        run: rlp pipeline run --stage sast --component "$RLP_COMPONENTS"
       - name: package
         run: rlp pipeline run --stage package --component "$RLP_COMPONENTS"
       - name: trivy
@@ -114,12 +120,20 @@ jobs:
             rlp pipeline summary >> "$GITHUB_STEP_SUMMARY"
             rlp pipeline summary
           fi
+      - name: Upload SARIF to code scanning
+        # act has no code scanning API; the reports stay in .rlp/pipeline/reports/.
+        if: always() && !env.ACT && hashFiles(format('{0}/.rlp/pipeline/reports/*.sarif', inputs.working-directory)) != ''
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        with:
+          sarif_file: ${{ inputs.working-directory }}/.rlp/pipeline/reports
       - name: Upload gate results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: rlp-gate-results
-          path: ${{ inputs.working-directory }}/.rlp/pipeline/results.json
+          path: |
+            ${{ inputs.working-directory }}/.rlp/pipeline/results.json
+            ${{ inputs.working-directory }}/.rlp/pipeline/reports/
           if-no-files-found: warn
 
   publish:

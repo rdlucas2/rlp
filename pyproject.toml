@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "click>=8.1,<9",
     "copier>=9.4,<10",
+    "diff-cover>=10.6,<11",
     "jsonschema>=4.23,<5",
     "PyYAML>=6.0,<7",
 ]

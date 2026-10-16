@@ -1,10 +1,15 @@
-"""Pinned OPA, conftest and gitleaks binaries.
+"""Pinned OPA, conftest, gitleaks and Trivy binaries, and the Semgrep rules.
 
-`rlp policy check` runs the policy bundle through conftest, and the pipeline's
-secret scan runs gitleaks. Rather than depend on whatever is on PATH, rlp
-downloads the pinned versions once into a per-user cache and checks each
-against the SHA256 published with its release. Versions match
-.devcontainer/install-tools.sh.
+`rlp policy check` runs the policy bundle through conftest, the pipeline's
+secret scan runs gitleaks and its vulnerability scan runs Trivy. Rather than
+depend on whatever is on PATH, rlp downloads the pinned versions once into a
+per-user cache and checks each against the SHA256 published with its release.
+Versions match .devcontainer/install-tools.sh.
+
+Trivy is large and only the trivy stage needs it, so it installs separately
+(ensure_trivy), not with the policy tools. Semgrep is a Python package, so it
+is installed with pip at SEMGREP_VERSION (golden.yml does this); rlp fetches
+only its rules, at a pinned commit.
 """
 
 from __future__ import annotations
@@ -13,7 +18,9 @@ import hashlib
 import io
 import os
 import platform
+import shutil
 import stat
+import subprocess
 import sys
 import tarfile
 import urllib.request
@@ -23,6 +30,12 @@ from pathlib import Path
 OPA_VERSION = "1.21.2"
 CONFTEST_VERSION = "0.71.1"
 GITLEAKS_VERSION = "8.30.1"
+TRIVY_VERSION = "0.76.0"
+SEMGREP_VERSION = "1.179.0"
+# semgrep/semgrep-rules has no releases; pin a commit. Fetched with git, so the
+# commit hash is the integrity check.
+SEMGREP_RULES_REPO = "https://github.com/semgrep/semgrep-rules"
+SEMGREP_RULES_COMMIT = "a84ff9cc2453ca91d581380de4b8b3f272f6f4be"
 GITHUB = "https://github.com"
 
 # (system, machine) -> (asset name, sha256)
@@ -47,8 +60,13 @@ GITLEAKS = {
     ("darwin", "arm64"): ("darwin_arm64.tar.gz", "b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"),
     ("windows", "x86_64"): ("windows_x64.zip", "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"),
 }
-
-
+TRIVY = {
+    ("linux", "x86_64"): ("Linux-64bit.tar.gz", "e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7"),
+    ("linux", "arm64"): ("Linux-ARM64.tar.gz", "aab21e677a7b7071fc79f1711480840754c18a1b9d9cefa7ccd06af63a0e8f4c"),
+    ("darwin", "x86_64"): ("macOS-64bit.tar.gz", "89563d4d495cf4ef06a0d1950f8710b124e9f7bd2615ec6c47b03673f4ad45a2"),
+    ("darwin", "arm64"): ("macOS-ARM64.tar.gz", "e7ec0d21fe842553f59af99aba2efbcc822369fbaed27019c575408b6d135fce"),
+    ("windows", "x86_64"): ("windows-64bit.zip", "7b4762a5a5326cb4b83dfd2bb5d9aaf15a1ed867c75cad7dd8b38840a28e7be6"),
+}
 class ToolError(RuntimeError):
     """A pinned tool could not be installed."""
 
@@ -64,11 +82,7 @@ def exe_suffix() -> str:
     return ".exe" if current_platform()[0] == "windows" else ""
 
 
-def cache_dir() -> Path:
-    """Where pinned tools live: $RLP_TOOLS_DIR, else the platform's user cache."""
-    override = os.environ.get("RLP_TOOLS_DIR")
-    if override:
-        return Path(override)
+def _cache_base() -> Path:
     system = current_platform()[0]
     if system == "windows":
         base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
@@ -76,7 +90,15 @@ def cache_dir() -> Path:
         base = Path.home() / "Library" / "Caches"
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    return base / "rlp" / "tools" / f"opa-{OPA_VERSION}-conftest-{CONFTEST_VERSION}-gitleaks-{GITLEAKS_VERSION}"
+    return base / "rlp" / "tools"
+
+
+def cache_dir() -> Path:
+    """Where pinned tools live: $RLP_TOOLS_DIR, else the platform's user cache."""
+    override = os.environ.get("RLP_TOOLS_DIR")
+    if override:
+        return Path(override)
+    return _cache_base() / f"opa-{OPA_VERSION}-conftest-{CONFTEST_VERSION}-gitleaks-{GITLEAKS_VERSION}"
 
 
 def _fetch(url: str, sha256: str) -> bytes:
@@ -135,6 +157,60 @@ def ensure(dest: Path | None = None) -> dict[str, Path]:
     _write_executable(paths["gitleaks"], _extract(archive, asset, f"gitleaks{exe}"))
     stamp.write_text(want, encoding="utf-8")
     return paths
+
+
+def ensure_trivy(dest: Path | None = None) -> Path:
+    """Install the pinned Trivy into dest (default: next to the other tools) and return its path."""
+    override = os.environ.get("RLP_TOOLS_DIR")
+    dest = dest or (Path(override) if override else _cache_base() / f"trivy-{TRIVY_VERSION}")
+    key = current_platform()
+    if key not in TRIVY:
+        raise ToolError(f"no pinned Trivy build for {key[0]} {key[1]}")
+    exe = exe_suffix()
+    path = dest / f"trivy{exe}"
+    stamp = dest / ".trivy-version"
+    if stamp.exists() and stamp.read_text(encoding="utf-8") == TRIVY_VERSION and path.exists():
+        return path
+    dest.mkdir(parents=True, exist_ok=True)
+    suffix, sha = TRIVY[key]
+    asset = f"trivy_{TRIVY_VERSION}_{suffix}"
+    archive = _fetch(f"{GITHUB}/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/{asset}", sha)
+    _write_executable(path, _extract(archive, asset, f"trivy{exe}"))
+    stamp.write_text(TRIVY_VERSION, encoding="utf-8")
+    return path
+
+
+def ensure_semgrep_rules(dest: Path | None = None) -> Path:
+    """Fetch semgrep-rules at the pinned commit (default: into the user cache) and return the checkout.
+
+    $RLP_SEMGREP_RULES points at an existing checkout instead, for offline use.
+    """
+    override = os.environ.get("RLP_SEMGREP_RULES")
+    if override:
+        return Path(override)
+    dest = dest or _cache_base() / f"semgrep-rules-{SEMGREP_RULES_COMMIT[:12]}"
+    stamp = dest / ".rlp-commit"
+    if stamp.exists() and stamp.read_text(encoding="utf-8") == SEMGREP_RULES_COMMIT:
+        return dest
+    git = shutil.which("git")
+    if git is None:
+        raise ToolError("git is needed to fetch the Semgrep rules")
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    for args in (
+        ["init", "-q"],
+        ["fetch", "-q", "--depth", "1", SEMGREP_RULES_REPO, SEMGREP_RULES_COMMIT],
+        ["-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"],
+    ):
+        proc = subprocess.run([git, *args], cwd=dest, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            raise ToolError(f"could not fetch {SEMGREP_RULES_REPO}@{SEMGREP_RULES_COMMIT}: {proc.stderr.strip()}")
+    head = subprocess.run([git, "rev-parse", "HEAD"], cwd=dest, capture_output=True, text=True, check=False).stdout.strip()
+    if head != SEMGREP_RULES_COMMIT:
+        raise ToolError(f"semgrep-rules checkout is at {head}, want {SEMGREP_RULES_COMMIT}")
+    stamp.write_text(SEMGREP_RULES_COMMIT, encoding="utf-8")
+    return dest
 
 
 def main(argv: list[str]) -> int:
