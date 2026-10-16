@@ -1,0 +1,32 @@
+# Standard verbs for the runtime fixture. `python` is whichever interpreter is on PATH.
+version: "3"
+
+tasks:
+  setup:
+    cmds:
+      - echo "nothing to install"
+
+  lint:
+    cmds:
+      - python -m compileall -q src
+
+  test:
+    cmds:
+      - python -c "import sys; sys.path.insert(0, 'src'); import app; assert app.handler({}, None)['statusCode'] == 200"
+
+  build:
+    cmds:
+      - echo "nothing to compile"
+
+  package:
+    cmds:
+      - python -c "import pathlib; pathlib.Path('dist').mkdir(exist_ok=True)"
+      - python -m zipfile -c dist/function.zip src/app.py
+
+  run:
+    cmds:
+      - 'echo "functions run through the local runtime: rlp run"'
+
+  smoke:
+    cmds:
+      - 'echo "functions are smoke-tested through the local runtime: rlp smoke"'
