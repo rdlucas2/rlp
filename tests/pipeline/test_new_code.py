@@ -1,7 +1,7 @@
-"""New code: the baseline commit, the sast stage (Opengrep) and coverage of changed lines.
+"""New code: the baseline commit, the sast stage (Semgrep) and coverage of changed lines.
 
-Opengrep and its rules are large downloads, so the sast tests use a fake
-`opengrep` that replays a report and a small fake rule tree; the
+Semgrep and its rules are large downloads, so the sast tests use a fake
+`semgrep` that replays a report and a small fake rule tree; the
 golden-selftest workflow runs the real one. diff-cover is a Python dependency
 of rlp, so the new-code coverage tests run it for real on fixture repos.
 """
@@ -29,19 +29,19 @@ GIT_ENV = {
     "GIT_COMMITTER_EMAIL": "rlp-tests@example.invalid",
 }
 
-FAKE_OPENGREP = '''#!{python}
-"""Stands in for opengrep: logs its arguments, writes $FAKE_OPENGREP_RESULTS as the JSON report."""
+FAKE_SEMGREP = '''#!{python}
+"""Stands in for semgrep: logs its arguments, writes $FAKE_SEMGREP_RESULTS as the JSON report."""
 import json, os, sys
 args = sys.argv[1:]
-with open(os.environ["FAKE_OPENGREP_LOG"], "w") as log:
+with open(os.environ["FAKE_SEMGREP_LOG"], "w") as log:
     json.dump(args, log)
 config = args[args.index("--config") + 1]
 prefix = ".".join(p.strip("/\\\\:") for p in config.replace("\\\\", "/").split("/") if p.strip("/\\\\:")) + "."
-results = json.loads(os.environ["FAKE_OPENGREP_RESULTS"])
+results = json.loads(os.environ["FAKE_SEMGREP_RESULTS"])
 for r in results:
     r["check_id"] = prefix + r["check_id"]
 json.dump({{"results": results, "errors": []}}, open(args[args.index("--json-output") + 1], "w"))
-open(args[args.index("--sarif-output") + 1], "w").write('{{"version": "2.1.0", "runs": [{{"tool": {{"driver": {{"name": "Opengrep"}}}}, "results": []}}]}}')
+open(args[args.index("--sarif-output") + 1], "w").write('{{"version": "2.1.0", "runs": [{{"tool": {{"driver": {{"name": "Semgrep"}}}}, "results": []}}]}}')
 '''
 
 MD5_FINDING = {
@@ -123,7 +123,7 @@ def test_no_git_no_baseline(tmp_path):
 
 @pytest.fixture
 def fake_rules(tmp_path: Path, monkeypatch) -> Path:
-    rules = tmp_path / "opengrep-rules"
+    rules = tmp_path / "semgrep-rules"
     for rel in [
         "python/lang/security/insecure-hash-algorithm-md5.yaml",
         "python/lang/security/audit/dangerous-subprocess-use-audit.yaml",
@@ -137,26 +137,26 @@ def fake_rules(tmp_path: Path, monkeypatch) -> Path:
         path = rules / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("rules: []\n", encoding="utf-8")
-    monkeypatch.setenv("RLP_OPENGREP_RULES", str(rules))
+    monkeypatch.setenv("RLP_SEMGREP_RULES", str(rules))
     return rules
 
 
 @pytest.fixture
-def fake_opengrep(tmp_path: Path, monkeypatch, fake_rules) -> dict:
+def fake_semgrep(tmp_path: Path, monkeypatch, fake_rules) -> dict:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    script = bin_dir / "fake_opengrep.py"
-    script.write_text(FAKE_OPENGREP.format(python=sys.executable), encoding="utf-8")
+    script = bin_dir / "fake_semgrep.py"
+    script.write_text(FAKE_SEMGREP.format(python=sys.executable), encoding="utf-8")
     if sys.platform == "win32":  # Windows runs .cmd files, not shebang scripts
-        exe = bin_dir / "opengrep.cmd"
+        exe = bin_dir / "semgrep.cmd"
         exe.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
     else:
         exe = script
         exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
-    log = tmp_path / "opengrep-args.json"
-    monkeypatch.setattr(tools, "ensure_opengrep", lambda dest=None: exe)
-    monkeypatch.setenv("FAKE_OPENGREP_LOG", str(log))
-    monkeypatch.setenv("FAKE_OPENGREP_RESULTS", "[]")
+    log = tmp_path / "semgrep-args.json"
+    monkeypatch.setattr(sast, "find_semgrep", lambda: (exe, tools.SEMGREP_VERSION))
+    monkeypatch.setenv("FAKE_SEMGREP_LOG", str(log))
+    monkeypatch.setenv("FAKE_SEMGREP_RESULTS", "[]")
     return {"log": log}
 
 
@@ -172,37 +172,60 @@ def test_select_rules_leaves_out_audit_rules_and_rule_tests(fake_rules, tmp_path
     assert [p.relative_to(dest).as_posix() for p in dest.rglob("*.yaml")] == ["python/lang/security/insecure-hash-algorithm-md5.yaml"]
 
 
-def test_sast_passes_without_findings_and_writes_sarif(repo, fake_opengrep):
+def test_sast_passes_without_findings_and_writes_sarif(repo, fake_semgrep):
     [result] = run_stage(repo, "sast")
     assert result.status == "passed", result.detail
     assert "whole repo (no baseline commit)" in result.detail
-    args = json.loads(fake_opengrep["log"].read_text(encoding="utf-8"))
+    args = json.loads(fake_semgrep["log"].read_text(encoding="utf-8"))
     assert "--baseline-commit" not in args
     assert args[args.index("--severity") + 1] == "ERROR" and "WARNING" in args
     doc = json.loads((repo / result.data["sarif"]).read_text(encoding="utf-8"))
-    assert doc["runs"][0]["automationDetails"]["id"] == "rlp/opengrep/"
+    assert doc["runs"][0]["automationDetails"]["id"] == "rlp/semgrep/"
 
 
-def test_sast_new_finding_fails_with_a_readable_line(repo, fake_opengrep, monkeypatch):
+def test_sast_new_finding_fails_with_a_readable_line(repo, fake_semgrep, monkeypatch):
     base = git(repo, "rev-parse", "HEAD")
     monkeypatch.setenv(baseline.ENV, base)
-    monkeypatch.setenv("FAKE_OPENGREP_RESULTS", json.dumps([MD5_FINDING]))
+    monkeypatch.setenv("FAKE_SEMGREP_RESULTS", json.dumps([MD5_FINDING]))
     [result] = run_stage(repo, "sast")
     assert result.status == "failed"
     assert f"1 new finding(s) since {base[:12]}" in result.detail
     assert "src/hello/digest.py:5 python.lang.security.insecure-hash-algorithm-md5 (WARNING)" in result.detail
     assert result.data["findings"][0]["message"] == "Detected MD5 hash algorithm which is considered insecure."
-    args = json.loads(fake_opengrep["log"].read_text(encoding="utf-8"))
+    args = json.loads(fake_semgrep["log"].read_text(encoding="utf-8"))
     assert args[args.index("--baseline-commit") + 1] == base
 
 
-def test_sast_without_rules_for_the_repo_fails(repo, fake_opengrep, tmp_path, monkeypatch):
+def test_sast_without_rules_for_the_repo_fails(repo, fake_semgrep, tmp_path, monkeypatch):
     empty = tmp_path / "no-rules"
     empty.mkdir()
-    monkeypatch.setenv("RLP_OPENGREP_RULES", str(empty))
+    monkeypatch.setenv("RLP_SEMGREP_RULES", str(empty))
     [result] = run_stage(repo, "sast")
     assert result.status == "failed"
-    assert "no Opengrep rules" in result.detail
+    assert "no Semgrep rules" in result.detail
+
+
+def test_sast_without_semgrep_fails_with_the_install_command(repo, fake_rules, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name, path=None: None)
+    [result] = run_stage(repo, "sast")
+    assert result.status == "failed"
+    assert f"pip install semgrep=={tools.SEMGREP_VERSION}" in result.detail
+
+
+def test_sast_notes_a_semgrep_version_other_than_the_pin(repo, fake_semgrep, monkeypatch):
+    exe, _ = sast.find_semgrep()
+    monkeypatch.setattr(sast, "find_semgrep", lambda: (exe, "0.0.1"))
+    [result] = run_stage(repo, "sast")
+    assert result.status == "passed"
+    assert f"semgrep 0.0.1, rlp pins {tools.SEMGREP_VERSION}" in result.detail
+
+
+def test_semgrep_pin_matches_the_workflow_and_devcontainer():
+    root = HERE.parents[1]
+    golden = (root / ".github" / "workflows" / "golden.yml").read_text(encoding="utf-8")
+    devcontainer = (root / ".devcontainer" / "install-tools.sh").read_text(encoding="utf-8")
+    assert f'SEMGREP_VERSION: "{tools.SEMGREP_VERSION}"' in golden
+    assert f"SEMGREP_VERSION={tools.SEMGREP_VERSION}" in devcontainer
 
 
 # --- coverage on new code (real diff-cover) ---

@@ -1,6 +1,6 @@
 """Optional Sonar analysis, for a SonarQube you run yourself.
 
-The golden pipeline's gates are Opengrep (sast) and diff-cover (coverage on new
+The golden pipeline's gates are Semgrep (sast) and diff-cover (coverage on new
 code); they need no server. This stage is an extra for people who want Sonar's
 dashboard and history: it runs only when SONAR_TOKEN is set, which CI never
 sets, so in practice it runs on a laptop against a local SonarQube.

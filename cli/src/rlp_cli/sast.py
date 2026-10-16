@@ -1,4 +1,8 @@
-"""Static analysis with the pinned Opengrep and the pinned opengrep-rules.
+"""Static analysis with Semgrep Community Edition and the pinned semgrep-rules.
+
+Semgrep is a Python package: install it at tools.SEMGREP_VERSION (golden.yml
+does). rlp fetches the rules itself at a pinned commit of semgrep-rules, so a
+scan needs no account, no registry and no login, and runs with metrics off.
 
 The rules come from each component's `language` (python, typescript, go, ...)
 plus Dockerfile and GitHub Actions rules for every repo. Rules under `audit/`
@@ -26,7 +30,7 @@ from rlp_cli.contract import component_dir
 REPORTS = Path(".rlp") / "pipeline" / "reports"
 SEVERITIES = ("ERROR", "WARNING")
 ALWAYS = ("dockerfile", "yaml/github-actions")
-# component.language -> opengrep-rules directories; other languages map to the directory of the same name
+# component.language -> semgrep-rules directories; other languages map to the directory of the same name
 LANGUAGES = {
     "typescript": ("typescript", "javascript"),
     "ts": ("typescript", "javascript"),
@@ -40,7 +44,7 @@ LANGUAGES = {
 
 
 class SastError(Exception):
-    """Opengrep could not run."""
+    """Semgrep is missing or could not run."""
 
 
 @dataclass
@@ -56,7 +60,7 @@ class Finding:
 
 
 def rule_dirs(rules: Path, doc: dict, only: tuple[str, ...] = ()) -> list[str]:
-    """The opengrep-rules directories that apply to this repo, in a stable order."""
+    """The semgrep-rules directories that apply to this repo, in a stable order."""
     wanted = []
     for c in doc.get("components") or []:
         if only and c["name"] not in only:
@@ -83,7 +87,7 @@ def select_rules(rules: Path, dirs: list[str], dest: Path) -> int:
 
 
 def _rule_id(check_id: str, config: Path) -> str:
-    """Opengrep prefixes rule ids with the config directory's path; drop it."""
+    """Semgrep prefixes rule ids with the config directory's path; drop it."""
     for path in (config, config.resolve()):
         prefix = ".".join(p.strip("/\\:") for p in path.parts if p.strip("/\\:")) + "."
         if check_id.startswith(prefix):
@@ -91,35 +95,44 @@ def _rule_id(check_id: str, config: Path) -> str:
     return check_id
 
 
+def find_semgrep() -> tuple[Path, str]:
+    """The semgrep on PATH and its version."""
+    exe = shutil.which("semgrep")
+    if exe is None:
+        raise SastError(f"semgrep is not installed: pip install semgrep=={tools.SEMGREP_VERSION}")
+    proc = subprocess.run([exe, "--version"], capture_output=True, text=True, check=False)
+    return Path(exe), proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else "unknown"
+
+
 def scan(root: Path, doc: dict, baseline: str | None, only: tuple[str, ...] = ()) -> dict:
-    """Run Opengrep over the repo (or the selected components). Returns the findings and report paths."""
+    """Run Semgrep over the repo (or the selected components). Returns the findings and report paths."""
+    exe, version = find_semgrep()
     try:
-        exe = tools.ensure_opengrep()
-        rules = tools.ensure_opengrep_rules()
+        rules = tools.ensure_semgrep_rules()
     except tools.ToolError as err:
         raise SastError(str(err)) from err
     dirs = rule_dirs(rules, doc, only)
     out = root / REPORTS
     out.mkdir(parents=True, exist_ok=True)
-    json_path, sarif_path = out / "opengrep.json", out / "opengrep.sarif"
+    json_path, sarif_path = out / "semgrep.json", out / "semgrep.sarif"
     targets = [str(component_dir(root, c)) for c in doc.get("components") or [] if c["name"] in only] if only else ["."]
     with tempfile.TemporaryDirectory() as tmp:
         config = Path(tmp) / "rules"
         count = select_rules(rules, dirs, config)
         if count == 0:
-            raise SastError(f"no Opengrep rules found under {rules} for {', '.join(dirs) or 'this repo'}")
-        args = [str(exe), "scan", "--config", str(config), "--disable-version-check", "--quiet",
+            raise SastError(f"no Semgrep rules found under {rules} for {', '.join(dirs) or 'this repo'}")
+        args = [str(exe), "scan", "--config", str(config), "--metrics=off", "--disable-version-check", "--quiet",
                 "--json-output", str(json_path), "--sarif-output", str(sarif_path)]
         for s in SEVERITIES:
             args += ["--severity", s]
         if baseline:
             args += ["--baseline-commit", baseline]
-        # Opengrep reads rule files with the locale's encoding; force UTF-8.
+        # Read rule files as UTF-8 whatever the locale.
         env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
         proc = subprocess.run([*args, *targets], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=False)
         if proc.returncode not in (0, 1) or not json_path.is_file():
             tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-5:])
-            raise SastError(f"opengrep exited {proc.returncode}: {tail}")
+            raise SastError(f"semgrep exited {proc.returncode}: {tail}")
         report = json.loads(json_path.read_text(encoding="utf-8"))
         findings = [
             Finding(
@@ -131,14 +144,16 @@ def scan(root: Path, doc: dict, baseline: str | None, only: tuple[str, ...] = ()
             )
             for r in report.get("results") or []
         ]
-    sarif.tag(sarif_path, "opengrep")
+    sarif.tag(sarif_path, "semgrep")
     return {
+        "semgrep": version,
+        "pinned": tools.SEMGREP_VERSION,
         "baseline": baseline,
         "rule_dirs": dirs,
         "rules": count,
         "findings": [asdict(f) for f in findings],
         "lines": [f.line_text() for f in findings],
         "errors": len(report.get("errors") or []),
-        "json": (REPORTS / "opengrep.json").as_posix(),
-        "sarif": (REPORTS / "opengrep.sarif").as_posix(),
+        "json": (REPORTS / "semgrep.json").as_posix(),
+        "sarif": (REPORTS / "semgrep.sarif").as_posix(),
     }

@@ -29,7 +29,7 @@ STAGES = [
     ("lint", "the lint verb, per component"),
     ("test", "the test verb, per component"),
     ("coverage", "line coverage, overall and on new code, against the declared minimum"),
-    ("sast", "Opengrep static analysis: no new findings"),
+    ("sast", "Semgrep static analysis: no new findings"),
     ("sonar", "optional local SonarQube analysis; skipped without SONAR_TOKEN"),
     ("package", "the package verb, per component"),
     ("trivy", "Trivy scan of dependencies and built images"),
@@ -145,6 +145,8 @@ def stage_sast(ctx: Context) -> StageResult:
     base = baseline.resolve(ctx.root)
     report = sast.scan(ctx.root, ctx.doc(), base, ctx.components)
     since = f"since {base[:12]}" if base else "in the whole repo (no baseline commit)"
+    if report["semgrep"] != report["pinned"]:
+        since += f"; semgrep {report['semgrep']}, rlp pins {report['pinned']}"
     if report["findings"]:
         shown = "; ".join(report["lines"][:5]) + ("; ..." if len(report["lines"]) > 5 else "")
         return StageResult("sast", "failed", f"{len(report['findings'])} new finding(s) {since}: {shown}", data=report)

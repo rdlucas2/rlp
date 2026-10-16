@@ -1,13 +1,15 @@
-"""Pinned OPA, conftest, gitleaks, Trivy and Opengrep binaries, and Opengrep's rules.
+"""Pinned OPA, conftest, gitleaks and Trivy binaries, and the Semgrep rules.
 
 `rlp policy check` runs the policy bundle through conftest, the pipeline's
-secret scan runs gitleaks, its vulnerability scan runs Trivy and its static
-analysis runs Opengrep. Rather than depend on whatever is on PATH, rlp
-downloads the pinned versions once into a per-user cache and checks each
-against a pinned SHA256. Versions match .devcontainer/install-tools.sh.
+secret scan runs gitleaks and its vulnerability scan runs Trivy. Rather than
+depend on whatever is on PATH, rlp downloads the pinned versions once into a
+per-user cache and checks each against the SHA256 published with its release.
+Versions match .devcontainer/install-tools.sh.
 
-Trivy and Opengrep are large and only one stage needs each, so they install
-separately (ensure_trivy, ensure_opengrep), not with the policy tools.
+Trivy is large and only the trivy stage needs it, so it installs separately
+(ensure_trivy), not with the policy tools. Semgrep is a Python package, so it
+is installed with pip at SEMGREP_VERSION (golden.yml does this); rlp fetches
+only its rules, at a pinned commit.
 """
 
 from __future__ import annotations
@@ -29,11 +31,11 @@ OPA_VERSION = "1.21.2"
 CONFTEST_VERSION = "0.71.1"
 GITLEAKS_VERSION = "8.30.1"
 TRIVY_VERSION = "0.76.0"
-OPENGREP_VERSION = "1.30.2"
-# opengrep/opengrep-rules has no releases; pin a commit. Fetched with git, so
-# the commit hash is the integrity check.
-OPENGREP_RULES_REPO = "https://github.com/opengrep/opengrep-rules"
-OPENGREP_RULES_COMMIT = "f1d2b562b414783763fd02a6ed2736eaed622efa"
+SEMGREP_VERSION = "1.179.0"
+# semgrep/semgrep-rules has no releases; pin a commit. Fetched with git, so the
+# commit hash is the integrity check.
+SEMGREP_RULES_REPO = "https://github.com/semgrep/semgrep-rules"
+SEMGREP_RULES_COMMIT = "a84ff9cc2453ca91d581380de4b8b3f272f6f4be"
 GITHUB = "https://github.com"
 
 # (system, machine) -> (asset name, sha256)
@@ -65,18 +67,6 @@ TRIVY = {
     ("darwin", "arm64"): ("macOS-ARM64.tar.gz", "e7ec0d21fe842553f59af99aba2efbcc822369fbaed27019c575408b6d135fce"),
     ("windows", "x86_64"): ("windows-64bit.zip", "7b4762a5a5326cb4b83dfd2bb5d9aaf15a1ed867c75cad7dd8b38840a28e7be6"),
 }
-# Opengrep publishes bare binaries with Sigstore signatures, no checksum file.
-# These hashes are of the v1.30.2 assets after checking each signature was made
-# by opengrep/opengrep's release workflow.
-OPENGREP = {
-    ("linux", "x86_64"): ("opengrep_manylinux_x86", "a66aa3278457f02b287b985a45b6762aebcaba5000f2689245fd1ed86d1456c7"),
-    ("linux", "arm64"): ("opengrep_manylinux_aarch64", "90acea5df4b733083f388d4feeb250ca802f671b33d1f222653d1e571dd2b0d8"),
-    ("darwin", "x86_64"): ("opengrep_osx_x86", "fcf47da30d5c3a11119f2ec4e0d1ee55e3c3822e8f90d909bf9f33dfce99044a"),
-    ("darwin", "arm64"): ("opengrep_osx_arm64", "f1aaa30b88959cb82522c4e1475816278a1f161f994509a518453c0455f9d24b"),
-    ("windows", "x86_64"): ("opengrep_windows_x86.exe", "523b1074a81006436fec457e2daccf7cf7cacc04000d4482f1072a1b19bc6372"),
-}
-
-
 class ToolError(RuntimeError):
     """A pinned tool could not be installed."""
 
@@ -190,54 +180,36 @@ def ensure_trivy(dest: Path | None = None) -> Path:
     return path
 
 
-def ensure_opengrep(dest: Path | None = None) -> Path:
-    """Install the pinned Opengrep into dest (default: the user cache) and return its path."""
-    override = os.environ.get("RLP_TOOLS_DIR")
-    dest = dest or (Path(override) if override else _cache_base() / f"opengrep-{OPENGREP_VERSION}")
-    key = current_platform()
-    if key not in OPENGREP:
-        raise ToolError(f"no pinned Opengrep build for {key[0]} {key[1]}")
-    path = dest / f"opengrep{exe_suffix()}"
-    stamp = dest / ".opengrep-version"
-    if stamp.exists() and stamp.read_text(encoding="utf-8") == OPENGREP_VERSION and path.exists():
-        return path
-    dest.mkdir(parents=True, exist_ok=True)
-    asset, sha = OPENGREP[key]
-    _write_executable(path, _fetch(f"{GITHUB}/opengrep/opengrep/releases/download/v{OPENGREP_VERSION}/{asset}", sha))
-    stamp.write_text(OPENGREP_VERSION, encoding="utf-8")
-    return path
+def ensure_semgrep_rules(dest: Path | None = None) -> Path:
+    """Fetch semgrep-rules at the pinned commit (default: into the user cache) and return the checkout.
 
-
-def ensure_opengrep_rules(dest: Path | None = None) -> Path:
-    """Fetch opengrep-rules at the pinned commit (default: into the user cache) and return the checkout.
-
-    $RLP_OPENGREP_RULES points at an existing checkout instead, for offline use.
+    $RLP_SEMGREP_RULES points at an existing checkout instead, for offline use.
     """
-    override = os.environ.get("RLP_OPENGREP_RULES")
+    override = os.environ.get("RLP_SEMGREP_RULES")
     if override:
         return Path(override)
-    dest = dest or _cache_base() / f"opengrep-rules-{OPENGREP_RULES_COMMIT[:12]}"
+    dest = dest or _cache_base() / f"semgrep-rules-{SEMGREP_RULES_COMMIT[:12]}"
     stamp = dest / ".rlp-commit"
-    if stamp.exists() and stamp.read_text(encoding="utf-8") == OPENGREP_RULES_COMMIT:
+    if stamp.exists() and stamp.read_text(encoding="utf-8") == SEMGREP_RULES_COMMIT:
         return dest
     git = shutil.which("git")
     if git is None:
-        raise ToolError("git is needed to fetch the Opengrep rules")
+        raise ToolError("git is needed to fetch the Semgrep rules")
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     for args in (
         ["init", "-q"],
-        ["fetch", "-q", "--depth", "1", OPENGREP_RULES_REPO, OPENGREP_RULES_COMMIT],
+        ["fetch", "-q", "--depth", "1", SEMGREP_RULES_REPO, SEMGREP_RULES_COMMIT],
         ["-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"],
     ):
         proc = subprocess.run([git, *args], cwd=dest, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
-            raise ToolError(f"could not fetch {OPENGREP_RULES_REPO}@{OPENGREP_RULES_COMMIT}: {proc.stderr.strip()}")
+            raise ToolError(f"could not fetch {SEMGREP_RULES_REPO}@{SEMGREP_RULES_COMMIT}: {proc.stderr.strip()}")
     head = subprocess.run([git, "rev-parse", "HEAD"], cwd=dest, capture_output=True, text=True, check=False).stdout.strip()
-    if head != OPENGREP_RULES_COMMIT:
-        raise ToolError(f"opengrep-rules checkout is at {head}, want {OPENGREP_RULES_COMMIT}")
-    stamp.write_text(OPENGREP_RULES_COMMIT, encoding="utf-8")
+    if head != SEMGREP_RULES_COMMIT:
+        raise ToolError(f"semgrep-rules checkout is at {head}, want {SEMGREP_RULES_COMMIT}")
+    stamp.write_text(SEMGREP_RULES_COMMIT, encoding="utf-8")
     return dest
 
 
