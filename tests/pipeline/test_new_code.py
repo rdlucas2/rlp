@@ -231,17 +231,18 @@ def seed_partly_covered_change(repo: Path) -> str:
     return base
 
 
-def run_test_and_coverage(repo: Path, monkeypatch) -> pipeline.StageResult:
+def run_setup_test_and_coverage(repo: Path, monkeypatch) -> pipeline.StageResult:
     monkeypatch.setenv("PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""))
-    results = run_stage(repo, "test", "coverage")
-    assert results[0].status == "passed", results[0].detail
-    return results[1]
+    # setup installs the fixture's test tools (pytest, coverage), as the pipeline does
+    results = run_stage(repo, "setup", "test", "coverage")
+    assert [r.status for r in results[:2]] == ["passed", "passed"], [r.detail for r in results]
+    return results[2]
 
 
 def test_new_code_below_minimum_fails_while_overall_passes(repo, monkeypatch):
     base = seed_partly_covered_change(repo)
     monkeypatch.setenv(baseline.ENV, base)
-    result = run_test_and_coverage(repo, monkeypatch)
+    result = run_setup_test_and_coverage(repo, monkeypatch)
     assert result.status == "failed", result.detail
     [overall] = result.data["results"]
     assert overall["ok"] and overall["percent"] >= 80
@@ -257,12 +258,12 @@ def test_new_code_above_a_lower_minimum_passes(repo, monkeypatch):
     commit(repo, "minimum 70")
     base = seed_partly_covered_change(repo)
     monkeypatch.setenv(baseline.ENV, base)
-    result = run_test_and_coverage(repo, monkeypatch)
+    result = run_setup_test_and_coverage(repo, monkeypatch)
     assert result.status == "passed", result.detail
     assert result.data["new_code"][0]["percent"] == 75.0
 
 
 def test_new_code_is_skipped_without_a_baseline(repo, monkeypatch):
-    result = run_test_and_coverage(repo, monkeypatch)
+    result = run_setup_test_and_coverage(repo, monkeypatch)
     assert result.status == "passed", result.detail
     assert "new code: api skipped (no baseline commit)" in result.detail
