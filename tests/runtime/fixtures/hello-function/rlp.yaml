@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rdlucas2/rlp/main/schemas/v1alpha1/repo.schema.json
+# Runtime fixture: the smallest zip function. `rlp run` packages it, unpacks the
+# zip into the AWS Lambda Python base image and `rlp smoke` invokes it through
+# the Runtime Interface Emulator.
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: hello-function
+  project: hello-function
+components:
+  - name: fn
+    language: python
+    artifact:
+      kind: zip
+      path: dist/function.zip
+    runtime:
+      kind: function
+      handler: app.handler
+    config:
+      - name: GREETING
+        default: hello
+    telemetry:
+      enabled: false
