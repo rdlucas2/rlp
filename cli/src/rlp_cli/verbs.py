@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from rlp_cli import artifacts
 from rlp_cli.contract import component_dir
 
 VERBS = ("setup", "lint", "test", "build", "package", "run", "smoke")
@@ -24,6 +26,7 @@ class Step:
     verb: str
     command: list[str]
     cwd: Path
+    env: dict[str, str] | None = None
     exit_code: int | None = None
     seconds: float = 0.0
     error: str | None = None
@@ -65,8 +68,9 @@ def plan(root: Path, doc: dict, verb: str, only: tuple[str, ...] = ()) -> list[S
     unknown = [n for n in only if n not in names]
     if unknown:
         raise VerbError(f"unknown component(s): {', '.join(unknown)}; rlp.yaml declares: {', '.join(names)}")
+    version = artifacts.version(root)
     return [
-        Step(c["name"], verb, command_for(c, verb), component_dir(root, c))
+        Step(c["name"], verb, command_for(c, verb), component_dir(root, c), artifacts.verb_env(doc, c, version))
         for c in components
         if not only or c["name"] in only
     ]
@@ -83,7 +87,8 @@ def execute(step: Step, stdout=None, stderr=None) -> Step:
         step.exit_code = 1
         return step
     start = time.monotonic()
-    result = subprocess.run([executable, *step.command[1:]], cwd=step.cwd, stdout=stdout, stderr=stderr, check=False)
+    env = {**os.environ, **(step.env or {})}
+    result = subprocess.run([executable, *step.command[1:]], cwd=step.cwd, env=env, stdout=stdout, stderr=stderr, check=False)
     step.seconds = time.monotonic() - start
     step.exit_code = result.returncode
     return step
