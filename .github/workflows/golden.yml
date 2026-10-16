@@ -9,8 +9,6 @@
 #         contents: write          # publish: attach zips and jars to releases
 #         packages: write          # publish: push images to GHCR
 #         security-events: write   # gates: upload SARIF to code scanning
-#       secrets:
-#         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}   # optional; without it sonar is skipped
 #
 # Every step is a thin wrapper around an `rlp` command; the gate logic lives in
 # the CLI (`rlp pipeline run`), so a laptop, `act` and Actions give the same
@@ -48,22 +46,6 @@ on:
         description: Publish artifacts on pushes to the default branch and on tags
         type: boolean
         default: true
-      sonar-host-url:
-        description: Sonar server; empty means SonarQube Cloud (https://sonarcloud.io)
-        type: string
-        default: ""
-      sonar-organization:
-        description: SonarQube Cloud organization; empty means the repo owner
-        type: string
-        default: ""
-      sonar-project-key:
-        description: Sonar project key; empty means <owner>_<repo>
-        type: string
-        default: ""
-    secrets:
-      SONAR_TOKEN:
-        description: Sonar analysis token; without it the sonar stage is skipped
-        required: false
 
 # No workflow-level permissions: a called workflow may not ask for more than
 # its caller grants, even for a job that ends up skipped. The gates job reads the
@@ -84,10 +66,9 @@ jobs:
       RLP_COMPONENTS: ${{ inputs.components }}
       RLP_DEPLOY_ENV: ${{ inputs.deploy-env }}
       RLP_DEPLOY_LOCAL: ${{ inputs.deploy-local }}
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
-      SONAR_ORGANIZATION: ${{ inputs.sonar-organization }}
-      SONAR_PROJECT_KEY: ${{ inputs.sonar-project-key }}
+      # New code (sast findings, coverage) is measured from here: the PR's base
+      # commit, or the commit before a push. Empty means the whole repo is new.
+      RLP_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -102,7 +83,7 @@ jobs:
             path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
             *) spec="rlp-cli==${RLP_SPEC}" ;;
           esac
-          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin pysonar==1.9.0.5762
+          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin
           rlp --version
       - name: precommit
         run: rlp pipeline run --reset --stage precommit --component "$RLP_COMPONENTS"
@@ -118,8 +99,8 @@ jobs:
         run: rlp pipeline run --stage test --component "$RLP_COMPONENTS"
       - name: coverage
         run: rlp pipeline run --stage coverage --component "$RLP_COMPONENTS"
-      - name: sonar
-        run: rlp pipeline run --stage sonar --component "$RLP_COMPONENTS"
+      - name: sast
+        run: rlp pipeline run --stage sast --component "$RLP_COMPONENTS"
       - name: package
         run: rlp pipeline run --stage package --component "$RLP_COMPONENTS"
       - name: trivy
