@@ -26,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+    "coverage==7.16.2",
     "pytest==9.1.1",
 ]
 
@@ -52,4 +53,6 @@ packages = ["cli/src/rlp_cli"]
 only-include = ["cli/src", "cli/README.md", "schemas/v1alpha1", "policy", "LICENSE"]
 
 [tool.pytest.ini_options]
-testpaths = ["schemas/tests", "tests/policy", "cli/tests"]
+testpaths = ["schemas/tests", "tests/policy", "tests/pipeline", "cli/tests"]
+# Fixture repos carry their own tests; they run inside the fixture, not here.
+norecursedirs = ["fixtures", ".*", "build", "dist", "*.egg", ".venv", "venv", "node_modules"]

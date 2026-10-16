@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rdlucas2/rlp/main/schemas/v1alpha1/repo.schema.json
+# Pipeline fixture: the smallest repo that passes every golden-pipeline gate.
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: hello
+  project: hello
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: container-service
+      port: 8000
+      health:
+        liveness: /healthz
+    reports:
+      junit: reports/junit.xml
+      coverage:
+        format: cobertura
+        path: reports/coverage.xml
+quality:
+  coverage:
+    minimum: 80

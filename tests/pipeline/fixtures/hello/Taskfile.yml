@@ -1,0 +1,32 @@
+# Standard verbs for the pipeline fixture. `python` is whichever interpreter is on PATH.
+version: "3"
+
+tasks:
+  setup:
+    cmds:
+      - python -m pip install --quiet --disable-pip-version-check -r requirements-dev.txt
+
+  lint:
+    cmds:
+      - python -m compileall -q src tests
+
+  test:
+    cmds:
+      - python -m coverage run --source=src -m pytest -q -p no:cacheprovider --junitxml=reports/junit.xml tests
+      - python -m coverage xml -o reports/coverage.xml
+
+  build:
+    cmds:
+      - echo "nothing to compile"
+
+  package:
+    cmds:
+      - docker build -t "$RLP_IMAGE" .
+
+  run:
+    cmds:
+      - python -m hello
+
+  smoke:
+    cmds:
+      - echo "smoke is exercised by the local runtime (#15)"
