@@ -50,7 +50,7 @@ The gates run in this order and stop at the first failure (`rlp pipeline stages`
 | `lint` | the lint verb, per component | lint fails |
 | `test` | the test verb, per component | a test fails |
 | `coverage` | each declared coverage report, in its native format, overall and on new code (diff-cover) | line coverage, or coverage of the changed lines, is below `quality.coverage.minimum` (or the platform floor when unset) |
-| `sast` | Opengrep with the rules for each component's language | an ERROR or WARNING finding is new since the baseline commit |
+| `sast` | Semgrep (Community Edition) with the rules for each component's language | an ERROR or WARNING finding is new since the baseline commit |
 | `sonar` | optional SonarQube analysis on your machine; not run by the workflow | the quality gate fails; skipped when `SONAR_TOKEN` is unset |
 | `package` | the package verb, per component | packaging fails |
 | `trivy` | Trivy scan of dependencies and each built image | a HIGH or CRITICAL vulnerability has a fix and no unexpired exception in `.rlp/vex.yaml` |
@@ -106,6 +106,6 @@ Under `act`, the deploy stage stays skipped unless the caller sets `deploy-local
 | SARIF upload to code scanning | skipped: act has no code scanning API | none: the reports stay in `.rlp/pipeline/reports/` |
 | GitHub OIDC (`id-token: write`) | not available | the AWS deploy (#16) can't run; use `deploy-local` |
 | `actions/cache` | ephemeral per run | none, only speed |
-| Runner image | `catthehacker/ubuntu:act-latest`, not the real `ubuntu-latest` | tool versions can differ; rlp pins conftest, OPA, gitleaks, Trivy and Opengrep itself |
+| Runner image | `catthehacker/ubuntu:act-latest`, not the real `ubuntu-latest` | tool versions can differ; rlp pins conftest, OPA, gitleaks and Trivy itself, and golden.yml pins Semgrep |
 
 The package stage needs Docker. act mounts the host's Docker socket, so image builds work as long as Docker runs locally.

@@ -1,4 +1,4 @@
-# Quality gates: Opengrep, diff-cover, Trivy, gitleaks
+# Quality gates: Semgrep, diff-cover, Trivy, gitleaks
 
 These scanners gate every rlp repo inside the [golden pipeline](pipeline.md). None of them needs an account or a server. Each runs from the `rlp` CLI, so `rlp pipeline run` on a laptop gives the same result as CI. Each leaves a machine-readable report in `.rlp/pipeline/` for agents; slice 1's remediation loops use these reports as verifiers. See #14.
 
@@ -7,7 +7,7 @@ These scanners gate every rlp repo inside the [golden pipeline](pipeline.md). No
 | gitleaks | `precommit` | a secret is found anywhere in git history | `reports/gitleaks.sarif`, findings in `results.json` |
 | coverage (overall) | `coverage` | line coverage is below the declared minimum | `results.json` |
 | coverage (new code) | `coverage` | lines changed since the baseline are covered below the declared minimum | `results.json`, with uncovered lines per file |
-| Opengrep | `sast` | an ERROR or WARNING finding is new since the baseline | `reports/opengrep.{json,sarif}` |
+| Semgrep | `sast` | an ERROR or WARNING finding is new since the baseline | `reports/semgrep.{json,sarif}` |
 | Trivy | `trivy` | a vulnerability at HIGH or above has a fix and no unexpired VEX exception | `reports/trivy-fs.{json,sarif}`, `reports/trivy-image-<component>.{json,sarif}` |
 | SonarQube (optional) | `sonar` | the Sonar quality gate fails; skipped without `SONAR_TOKEN`, and never run in CI | your SonarQube dashboard |
 
@@ -33,23 +33,24 @@ With no baseline, the whole repo counts as new. `sast` then reports every findin
 
 A change with no measured lines, such as docs or tests only, passes.
 
-## Static analysis (Opengrep)
+## Static analysis (Semgrep)
 
-[Opengrep](https://github.com/opengrep/opengrep) is an open fork of Semgrep CE (LGPL-2.1), with the same rule format. rlp pins two things:
+[Semgrep Community Edition](https://github.com/semgrep/semgrep) (LGPL-2.1) runs with rules from a pinned commit of [semgrep-rules](https://github.com/semgrep/semgrep-rules):
 
-- the Opengrep binary, which rlp checksum-verifies;
-- a commit of [opengrep-rules](https://github.com/opengrep/opengrep-rules), which rlp fetches with git.
+- **Semgrep itself** is a Python package. `golden.yml` installs it at the version pinned in `rlp_cli/tools.py` (`SEMGREP_VERSION`), and so does the devcontainer. Locally, run `pip install semgrep==<that version>`. The stage notes it if another version is installed.
+- **The rules** are fetched with git at a pinned commit, so a scan needs no Semgrep account, login or registry access, and runs with metrics off. Bumping the commit is a normal reviewed change.
 
 **Rule selection.** The rule directories follow each component's `language`. For example, `python` maps to `python/`, and `typescript` maps to `typescript/` and `javascript/`. Other languages use the directory of the same name. Every repo also gets `dockerfile/` and `yaml/github-actions/`. Rules under `audit/` are left out, because they flag patterns for manual review, not defects.
 
-**What fails.** A finding with severity ERROR or WARNING that is new since the baseline.
+**What fails.** An ERROR or WARNING finding that is new since the baseline.
 
 **Suppressions.** A `# nosemgrep` comment silences one finding. Like VEX exceptions, suppressions are quality-gate configuration, and agent-authored changes may not add them.
 
 **Licences and limits.**
-- The opengrep-rules repo is the Semgrep rules as of their December 2024 licence change: LGPL-2.1 with the Commons Clause, which forbids selling the rules. rlp doesn't sell them.
-- The rules repo has had few updates since the fork. Newer rules can be added as rlp's own rules later.
-- Cross-file (taint) analysis isn't in Opengrep, as it isn't in Semgrep CE.
+
+- The Semgrep CE engine is LGPL-2.1.
+- The Semgrep-maintained rules are under the Semgrep Rules License v1.0. It allows internal use but not use in a competing product or paid service. rlp is open source and doesn't sell scanning, so running the rules here is fine. Someone offering rlp as a hosted service would need to check that licence.
+- Cross-file (taint) analysis and Semgrep's Pro rules are not in Community Edition.
 
 Code smells and complexity come from each template's `lint` verb (for example ruff for Python), which the `lint` stage already gates.
 
@@ -121,7 +122,7 @@ Community Build analyses a single branch, so each local run replaces the last on
 
 | Tool | Licence | Account | Notes |
 | --- | --- | --- | --- |
-| Opengrep | LGPL-2.1 | none | rules: LGPL-2.1 + Commons Clause |
+| Semgrep CE | LGPL-2.1 | none | rules: Semgrep Rules License v1.0 (internal use; no competing product or paid service) |
 | diff-cover | Apache-2.0 | none | Python package |
 | Trivy | Apache-2.0 | none | downloads its DB from `mirror.gcr.io` (then `ghcr.io`), which can rate-limit busy runners |
 | gitleaks | MIT | none | only the GitHub Action needs a licence key, for organizations |
