@@ -2,7 +2,18 @@
 
 An open-source, agent-native internal developer platform: from idea to architecture, scaffolded code, gated pipeline, deployment, monitoring and retirement — running identically locally and in AWS.
 
-Work is tracked in [GitHub Issues](https://github.com/rdlucas2/rlp/issues), organized by slice milestones.
+Work is tracked in [GitHub Issues](https://github.com/rdlucas2/rlp/issues), organized by slice milestones. The plan, principles and architecture are in [docs/PLAN.md](docs/PLAN.md); setup and conventions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Repository layout
+
+| Path | What lives there |
+| --- | --- |
+| `cli/` | The `rlp` CLI (Python + Click) |
+| `schemas/` | JSON Schemas for the contract files |
+| `policy/` | OPA/Rego policy bundle |
+| `platform/` | Platform API, state store and UI |
+| `infra/` | Terraform bootstrap and runtime modules |
+| `docs/` | Plan and guides |
 
 ## Contributing workflow
 
