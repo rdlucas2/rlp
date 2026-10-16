@@ -1,0 +1,24 @@
+# Runs the golden pipeline from this checkout on the hello fixture repo, so a
+# change to golden.yml or the CLI is proven end to end before it merges.
+# Publishing is off: the fixture is not a real project.
+name: golden-selftest
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: golden-selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hello:
+    uses: ./.github/workflows/golden.yml
+    with:
+      rlp-version: "path:."
+      working-directory: tests/pipeline/fixtures/hello
+      publish: false

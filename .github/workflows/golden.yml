@@ -1,0 +1,164 @@
+# The rlp golden pipeline: one reusable workflow every rlp repo calls.
+#
+#   jobs:
+#     golden:
+#       uses: rdlucas2/rlp/.github/workflows/golden.yml@<rlp git ref>
+#       with:
+#         rlp-version: "0.2.0"
+#       permissions:
+#         contents: write   # publish: attach zips and jars to releases
+#         packages: write   # publish: push images to GHCR
+#
+# Every step is a thin wrapper around an `rlp` command; the gate logic lives in
+# the CLI (`rlp pipeline run`), so a laptop, `act` and Actions give the same
+# results. See docs/pipeline.md.
+name: golden
+
+on:
+  workflow_call:
+    inputs:
+      rlp-version:
+        description: "rlp-cli to install: a PyPI version (0.2.0), git:<ref> or path:<dir in this repo>"
+        type: string
+        required: true
+      deploy-env:
+        description: Target environment for the deploy stage; empty skips deploy
+        type: string
+        default: ""
+      deploy-local:
+        description: Deploy to LocalStack instead of AWS (for act)
+        type: boolean
+        default: false
+      components:
+        description: Comma-separated component names; empty means every component
+        type: string
+        default: ""
+      working-directory:
+        description: Repo root of the project, relative to the checkout
+        type: string
+        default: "."
+      python-version:
+        description: Python used to run rlp
+        type: string
+        default: "3.13"
+      publish:
+        description: Publish artifacts on pushes to the default branch and on tags
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RLP_SPEC: ${{ inputs.rlp-version }}
+      RLP_COMPONENTS: ${{ inputs.components }}
+      RLP_DEPLOY_ENV: ${{ inputs.deploy-env }}
+      RLP_DEPLOY_LOCAL: ${{ inputs.deploy-local }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # gitleaks scans the full history
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install rlp
+        run: |
+          case "$RLP_SPEC" in
+            git:*) spec="rlp-cli @ git+https://github.com/rdlucas2/rlp@${RLP_SPEC#git:}" ;;
+            path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
+            *) spec="rlp-cli==${RLP_SPEC}" ;;
+          esac
+          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin
+          rlp --version
+      - name: precommit
+        run: rlp pipeline run --reset --stage precommit --component "$RLP_COMPONENTS"
+      - name: validate
+        run: rlp pipeline run --stage validate --component "$RLP_COMPONENTS"
+      - name: policy
+        run: rlp pipeline run --stage policy --component "$RLP_COMPONENTS"
+      - name: setup
+        run: rlp pipeline run --stage setup --component "$RLP_COMPONENTS"
+      - name: lint
+        run: rlp pipeline run --stage lint --component "$RLP_COMPONENTS"
+      - name: test
+        run: rlp pipeline run --stage test --component "$RLP_COMPONENTS"
+      - name: coverage
+        run: rlp pipeline run --stage coverage --component "$RLP_COMPONENTS"
+      - name: sonar
+        run: rlp pipeline run --stage sonar --component "$RLP_COMPONENTS"
+      - name: package
+        run: rlp pipeline run --stage package --component "$RLP_COMPONENTS"
+      - name: trivy
+        run: rlp pipeline run --stage trivy --component "$RLP_COMPONENTS"
+      - name: terraform
+        run: rlp pipeline run --stage terraform --component "$RLP_COMPONENTS"
+      - name: deploy
+        run: |
+          args=(--stage deploy --component "$RLP_COMPONENTS" --deploy-env "$RLP_DEPLOY_ENV")
+          if [ "$RLP_DEPLOY_LOCAL" = "true" ]; then args+=(--deploy-local); fi
+          rlp pipeline run "${args[@]}"
+      - name: Gate summary
+        if: always()
+        run: |
+          if command -v rlp >/dev/null; then
+            rlp pipeline summary >> "$GITHUB_STEP_SUMMARY"
+            rlp pipeline summary
+          fi
+      - name: Upload gate results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: rlp-gate-results
+          path: ${{ inputs.working-directory }}/.rlp/pipeline/results.json
+          if-no-files-found: warn
+
+  publish:
+    needs: gates
+    if: >-
+      inputs.publish && github.event_name == 'push' &&
+      (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RLP_SPEC: ${{ inputs.rlp-version }}
+      RLP_COMPONENTS: ${{ inputs.components }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install rlp
+        run: |
+          case "$RLP_SPEC" in
+            git:*) spec="rlp-cli @ git+https://github.com/rdlucas2/rlp@${RLP_SPEC#git:}" ;;
+            path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
+            *) spec="rlp-cli==${RLP_SPEC}" ;;
+          esac
+          python -m pip install --disable-pip-version-check "$spec" go-task-bin
+      - name: Package
+        run: rlp pipeline run --reset --stage setup --stage package --component "$RLP_COMPONENTS"
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          registry="ghcr.io/${GITHUB_REPOSITORY,,}"
+          args=(--registry "$registry" --component "$RLP_COMPONENTS")
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then args+=(--release "$GITHUB_REF_NAME"); fi
+          rlp publish "${args[@]}"
