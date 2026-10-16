@@ -1,8 +1,8 @@
 """Line coverage from each component's native report, checked against the minimum.
 
 The minimum is quality.coverage.minimum from rlp.yaml, or the platform floor
-from the policy bundle when rlp.yaml sets none. Sonar (#14) gates coverage on
-new code; this check gates overall coverage and runs anywhere, offline.
+from the policy bundle when rlp.yaml sets none. Sonar (rlp_cli/sonar.py) gates
+coverage on new code; this check gates overall coverage and runs anywhere, offline.
 """
 
 from __future__ import annotations

@@ -160,10 +160,12 @@ def test_summary_has_per_component_table(repo):
 
 
 def test_pending_and_deploy_stages_skip_with_reason(repo):
-    proc = rlp(repo, "pipeline", "run", "--reset", "-s", "sonar", "-s", "trivy", "-s", "terraform", "-s", "deploy", "--deploy-local", "-o", "json")
+    # trivy always runs; tests/pipeline/test_quality_gates.py covers it.
+    proc = rlp(repo, "pipeline", "run", "--reset", "-s", "sonar", "-s", "terraform", "-s", "deploy", "--deploy-local", "-o", "json", extra_env={"SONAR_TOKEN": ""})
     assert proc.returncode == 0
     report = json.loads(proc.stdout)
-    assert statuses(report) == {"sonar": "skipped", "trivy": "skipped", "terraform": "skipped", "deploy": "skipped"}
+    assert statuses(report) == {"sonar": "skipped", "terraform": "skipped", "deploy": "skipped"}
+    assert "SONAR_TOKEN" in report["stages"][0]["detail"]
     assert "LocalStack" in report["stages"][-1]["detail"]
 
 

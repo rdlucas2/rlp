@@ -18,7 +18,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from rlp_cli import contract, coverage, policy, secrets, verbs
+from rlp_cli import contract, coverage, policy, secrets, sonar, trivy, verbs, vex
 
 # (stage, what it gates). Order is the pipeline order.
 STAGES = [
@@ -29,14 +29,16 @@ STAGES = [
     ("lint", "the lint verb, per component"),
     ("test", "the test verb, per component"),
     ("coverage", "line coverage against the declared minimum"),
-    ("sonar", "Sonar quality gate (#14)"),
+    ("sonar", "Sonar analysis and quality gate"),
     ("package", "the package verb, per component"),
-    ("trivy", "Trivy vulnerability scan (#14)"),
+    ("trivy", "Trivy scan of dependencies and built images"),
     ("terraform", "Terraform plan checked by OPA (#16)"),
     ("deploy", "deploy to the target environment (#16)"),
 ]
 STAGE_NAMES = [name for name, _ in STAGES]
 RESULTS = Path(".rlp") / "pipeline" / "results.json"
+# SARIF and JSON reports from the scanners, uploaded to code scanning by golden.yml.
+REPORTS = Path(".rlp") / "pipeline" / "reports"
 
 
 @dataclass
@@ -77,10 +79,11 @@ def stage_precommit(ctx: Context) -> StageResult:
         notes.append("pre-commit hooks passed")
     else:
         notes.append("no .pre-commit-config.yaml")
-    findings = secrets.scan(ctx.root)
+    sarif = REPORTS / "gitleaks.sarif"
+    findings = secrets.scan(ctx.root, sarif=ctx.root / sarif)
     if findings:
         where = ", ".join(sorted({f"{f['file']}:{f['line']}" for f in findings}))
-        return StageResult("precommit", "failed", f"gitleaks found {len(findings)} secret(s): {where}", data={"findings": findings})
+        return StageResult("precommit", "failed", f"gitleaks found {len(findings)} secret(s): {where}", data={"findings": findings, "sarif": sarif.as_posix()})
     notes.append("gitleaks: no secrets")
     return StageResult("precommit", "passed", "; ".join(notes))
 
@@ -131,8 +134,27 @@ def stage_coverage(ctx: Context) -> StageResult:
     return StageResult("coverage", status, "; ".join(parts), components=per, data=data)
 
 
-def stage_pending(name: str, issue: str) -> StageResult:
-    return StageResult(name, "skipped", f"not wired yet ({issue})")
+def stage_sonar(ctx: Context) -> StageResult:
+    if not sonar.configured():
+        return StageResult("sonar", "skipped", "SONAR_TOKEN is not set, so no Sonar analysis ran (see docs/quality-gates.md)")
+    props = sonar.properties(ctx.root, ctx.doc())
+    code = sonar.analyse(ctx.root, ctx.doc(), stream=ctx.stream)
+    data = {"properties": {k: v for k, v in props.items() if k != "sonar.projectBaseDir"}}
+    where = f"{props['sonar.host.url']} project {props['sonar.projectKey']}"
+    if code != 0:
+        return StageResult("sonar", "failed", f"Sonar quality gate failed or analysis errored (exit {code}); see {where}", data=data)
+    return StageResult("sonar", "passed", f"quality gate passed on {where}", data=data)
+
+
+def stage_trivy(ctx: Context) -> StageResult:
+    report = trivy.check(ctx.root, ctx.doc(), ctx.components)
+    excepted = len(report["findings"]) - report["blocking"]
+    targets = ", ".join(s["target"] for s in report["scans"])
+    note = f"; {excepted} covered by .rlp/vex.yaml" if excepted else ""
+    if report["blocking"]:
+        shown = "; ".join(report["lines"][:5]) + ("; ..." if len(report["lines"]) > 5 else "")
+        return StageResult("trivy", "failed", f"{report['blocking']} fixable HIGH or CRITICAL finding(s){note}: {shown}", data=report)
+    return StageResult("trivy", "passed", f"no fixable HIGH or CRITICAL vulnerabilities in {targets}{note}", data=report)
 
 
 def stage_terraform(ctx: Context) -> StageResult:
@@ -154,9 +176,9 @@ RUNNERS = {
     "lint": lambda ctx: run_verb(ctx, "lint"),
     "test": lambda ctx: run_verb(ctx, "test"),
     "coverage": stage_coverage,
-    "sonar": lambda ctx: stage_pending("sonar", "#14"),
+    "sonar": stage_sonar,
     "package": lambda ctx: run_verb(ctx, "package"),
-    "trivy": lambda ctx: stage_pending("trivy", "#14"),
+    "trivy": stage_trivy,
     "terraform": stage_terraform,
     "deploy": stage_deploy,
 }
@@ -190,7 +212,7 @@ def run(ctx: Context, stages: list[str], reset: bool = False) -> list[StageResul
         start = time.monotonic()
         try:
             result = RUNNERS[name](ctx)
-        except (contract.ContractError, verbs.VerbError, policy.PolicyError, secrets.ScanError, coverage.CoverageError) as err:
+        except (contract.ContractError, verbs.VerbError, policy.PolicyError, secrets.ScanError, coverage.CoverageError, sonar.SonarError, trivy.ScanError, vex.VexError) as err:
             result = StageResult(name, "failed", str(err))
         result.seconds = round(time.monotonic() - start, 3)
         ran.append(result)
