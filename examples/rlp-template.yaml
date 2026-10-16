@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rdlucas2/rlp/main/schemas/v1alpha1/template.schema.json
+# Slice-0 example: the contract of rdlucas2/rlp-template-python-fastapi.
+apiVersion: rlp/v1alpha1
+kind: Template
+metadata:
+  name: python-fastapi
+  version: 0.1.0
+  description: Hello-world FastAPI service with every rlp gate passing out of the box.
+  owners:
+    - rdlucas2
+produces:
+  components:
+    - language: python
+      artifact: container-image
+      runtime: container-service
+      services:
+        - postgres
+      coverageFormat: cobertura
+  files:
+    - rlp.yaml
+    - Taskfile.yml
+    - Dockerfile
+    - .copier-answers.yml
+    - .pre-commit-config.yaml
+requires:
+  rlp: ">=0.1.0"
+  tools:
+    - name: uv
+      version: ">=0.5"
+    - name: go-task
+      version: ">=3"
+    - name: docker
+conformance:
+  answers: tests/default-answers.yml
+  verbs:
+    - setup
+    - lint
+    - test
+    - build
+    - package
+    - run
+    - smoke

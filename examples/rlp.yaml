@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rdlucas2/rlp/main/schemas/v1alpha1/repo.schema.json
+# Slice-0 example: what the Python FastAPI template renders for a hello-world service.
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: hello-api
+  project: hello-api
+  description: Hello-world FastAPI service rendered from the slice-0 template.
+  owners:
+    - rdlucas2
+  template:
+    source: gh:rdlucas2/rlp-template-python-fastapi
+    version: v0.1.0
+components:
+  - name: api
+    path: .
+    language: python
+    artifact:
+      kind: container-image
+      dockerfile: Dockerfile
+    runtime:
+      kind: container-service
+      port: 8000
+      health:
+        liveness: /healthz
+        readiness: /readyz
+    # Every verb runs `task <name>` unless overridden here.
+    verbs: {}
+    reports:
+      junit: reports/junit.xml
+      coverage:
+        format: cobertura
+        path: reports/coverage.xml
+    config:
+      - name: LOG_LEVEL
+        description: Log level for the JSON logger.
+        default: info
+      - name: DATABASE_URL
+        description: Connection string for the sample Postgres service.
+        from: service:db
+        required: true
+      - name: API_TOKEN
+        description: Token for the sample protected route.
+        secret: true
+    services:
+      - name: db
+        kind: postgres
+        version: "17"
+    telemetry:
+      enabled: true
+      serviceName: hello-api
+quality:
+  coverage:
+    minimum: 80
