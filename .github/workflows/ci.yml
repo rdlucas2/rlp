@@ -1,0 +1,30 @@
+# Baseline checks on every PR and on main. The full golden pipeline (#13)
+# replaces this; until then it is the gate every PR must pass.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install tooling
+        run: pip install pre-commit go-task-bin
+      - name: Lint (all pre-commit hooks, including gitleaks)
+        run: task lint
+      - name: Test
+        run: task test
