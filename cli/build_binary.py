@@ -49,6 +49,8 @@ def main() -> int:
         "--collect-all", "copier",
         # copier loads this Jinja extension by name at render time
         "--collect-all", "jinja2_ansible_filters",
+        # diff-cover (new-code coverage) loads its report templates and plugins at run time
+        "--collect-all", "diff_cover",
         "--add-data", f"{ROOT / 'schemas' / 'v1alpha1'}{sep}rlp_cli/_data/schemas/v1alpha1",
         "--add-data", f"{ROOT / 'policy'}{sep}rlp_cli/_data/policy",
     ])
