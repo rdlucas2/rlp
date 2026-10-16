@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from rlp_cli import sarif as sarif_report
 from rlp_cli import tools
 
 
@@ -27,8 +28,11 @@ def in_git(root: Path) -> bool:
     return out.returncode == 0 and out.stdout.strip() == "true"
 
 
-def scan(root: Path) -> list[dict]:
-    """Findings as dicts with rule, file, line and commit (secrets redacted)."""
+def scan(root: Path, sarif: Path | None = None) -> list[dict]:
+    """Findings as dicts with rule, file, line and commit (secrets redacted).
+
+    With sarif, also write a SARIF report there for code scanning.
+    """
     try:
         gitleaks = tools.ensure()["gitleaks"]
     except tools.ToolError as err:
@@ -41,6 +45,14 @@ def scan(root: Path) -> list[dict]:
         if result.returncode not in (0, 1):
             raise ScanError(f"gitleaks exited {result.returncode}: {result.stderr.strip()}")
         findings = json.loads(report.read_text(encoding="utf-8") or "[]") if report.exists() else []
+    if sarif is not None:
+        sarif.parent.mkdir(parents=True, exist_ok=True)
+        args[args.index("--report-format") + 1] = "sarif"
+        args[args.index("--report-path") + 1] = str(sarif)
+        result = subprocess.run(args, cwd=root, capture_output=True, text=True, encoding="utf-8", check=False)
+        if result.returncode not in (0, 1):
+            raise ScanError(f"gitleaks exited {result.returncode} writing SARIF: {result.stderr.strip()}")
+        sarif_report.tag(sarif, "gitleaks")
     return [
         {
             "rule": f.get("RuleID", ""),
