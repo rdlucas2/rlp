@@ -69,6 +69,7 @@ jobs:
       # New code (sast findings, coverage) is measured from here: the PR's base
       # commit, or the commit before a push. Empty means the whole repo is new.
       RLP_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      SEMGREP_VERSION: "1.179.0"  # keep in step with SEMGREP_VERSION in cli/src/rlp_cli/tools.py
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -83,7 +84,7 @@ jobs:
             path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
             *) spec="rlp-cli==${RLP_SPEC}" ;;
           esac
-          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin
+          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin "semgrep==$SEMGREP_VERSION"
           rlp --version
       - name: precommit
         run: rlp pipeline run --reset --stage precommit --component "$RLP_COMPONENTS"
