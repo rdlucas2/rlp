@@ -11,6 +11,15 @@ The build loop is a scheduled agent run, every 4 hours, that works the rlp backl
 | Fix attempts per issue | 3, counted across runs |
 | Waiting on CI per run | about 20 minutes |
 
+## Repos
+
+Issues, milestones and labels live in `rdlucas2/rlp`. Some issues are implemented in another repo, such as a Copier template (`rdlucas2/rlp-template-<name>`). The issue says which repo; #12, for example, belongs in `rdlucas2/rlp-template-python-fastapi`.
+
+- Clone that repo, branch off its latest `main`, and open the PR there. Put `Closes rdlucas2/rlp#<issue>` in the body and label it `agent:authored`.
+- Comment on the issue in `rdlucas2/rlp`, as for any other issue.
+- The open-PR limit counts `agent:authored` PRs across every repo the loop works in.
+- If the run can't push to that repo, don't work around it. Label the issue `needs:human`, comment the exact access that's missing (for example "add the repo to the build loop's scheduled task with push access"), and end the run.
+
 ## One run
 
 Do the first step that applies, then end the run.
@@ -22,7 +31,7 @@ Do the first step that applies, then end the run.
 
 ### 2. Finish open work first (WIP limit)
 
-List open PRs labelled `agent:authored`.
+List open PRs labelled `agent:authored` in `rdlucas2/rlp` and in each template repo the run can read (see Repos).
 
 - **One is open with failing checks, or with review comments or a "changes requested" review not yet addressed:** fix it on its branch, push, wait for checks, and reply to each addressed comment. End the run.
 - **One is open, green and waiting on review:** do nothing. End the run without commenting.
