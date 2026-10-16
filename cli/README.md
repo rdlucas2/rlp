@@ -23,7 +23,7 @@ Binaries exist for Linux (x86_64, arm64), macOS (Apple silicon) and Windows (x86
 - **macOS**: Gatekeeper may say the binary "cannot be opened". The install script prints the fix: `xattr -d com.apple.quarantine ~/.local/bin/rlp`.
 - **Windows**: SmartScreen may warn on first run. Choose **More info**, then **Run anyway**.
 
-Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git (for `rlp new` and `rlp update` with git templates) and, later, Docker. `rlp policy check` downloads the pinned conftest on first use into your user cache, checked against its published SHA256 (`RLP_TOOLS_DIR` overrides the location).
+Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git (for `rlp new` and `rlp update` with git templates) and Docker with Compose v2 (for `rlp run`, `rlp smoke` and `rlp down`). `rlp policy check` downloads the pinned conftest on first use into your user cache, checked against its published SHA256 (`RLP_TOOLS_DIR` overrides the location).
 
 ## Commands
 
@@ -31,7 +31,11 @@ Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git
 | --- | --- |
 | `rlp validate [PATH]` | Validate `rlp.yaml` and `rlp-template.yaml` against the JSON Schemas; errors name the field path |
 | `rlp policy check [PATH] [--namespace NS]` | Run the policy bundle on the repo through conftest |
-| `rlp setup\|lint\|test\|build\|package\|run\|smoke [--component NAME] [--path ROOT]` | Run that verb for every component (or the named ones): `verbs.<name>` from `rlp.yaml` if set, else `task <name>`, in the component's `path` |
+| `rlp setup\|lint\|test\|build\|package [--component NAME] [--path ROOT]` | Run that verb for every component (or the named ones): `verbs.<name>` from `rlp.yaml` if set, else `task <name>`, in the component's `path` |
+| `rlp run [--no-start] [--timeout S]` | Start every component and its backing services locally with Docker Compose, then wait until smoke passes ([docs/runtime.md](../docs/runtime.md)) |
+| `rlp smoke [--timeout S]` | Check each running component: health endpoints, a function invoke, or a job's exit code |
+| `rlp down [-v]` | Stop and remove what `rlp run` started; `-v` also deletes database volumes |
+| `rlp run\|smoke --native` | Run the component's own `run` or `smoke` verb instead, without Docker |
 | `rlp new TEMPLATE [DEST] [--data K=V] [--defaults]` | Render a Copier template, then validate the result |
 | `rlp update [PATH] [--data K=V] [--defaults]` | Update a rendered repo to a newer template version with Copier, then validate it |
 | `rlp reports [--path ROOT]` | Print each component's report paths and the Sonar properties they map to |
