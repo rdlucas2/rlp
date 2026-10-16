@@ -74,11 +74,12 @@ For example: `[RLP-X003] rlp.yaml components[0].config[0].from: refers to servic
 
 ## VEX exceptions
 
-Accepted vulnerabilities live in `.rlp/vex.yaml` at the repo root. The quality gates (#14) read the same file:
+Accepted vulnerabilities live in `.rlp/vex.yaml` at the repo root. The trivy stage of the golden pipeline reads the same file ([docs/quality-gates.md](../docs/quality-gates.md)):
 
 ```yaml
 exceptions:
   - id: CVE-2026-0001
+    component: urllib3      # optional: only this package
     reason: The vulnerable function is never called from our code.
     expires: "2026-12-31"   # valid through this day, then the gate fails again
 ```

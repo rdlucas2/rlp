@@ -18,8 +18,11 @@ jobs:
     with:
       rlp-version: "0.2.0"
     permissions:
-      contents: write   # publish: attach zips and jars to GitHub Releases
-      packages: write   # publish: push images to GHCR
+      contents: write          # publish: attach zips and jars to GitHub Releases
+      packages: write          # publish: push images to GHCR
+      security-events: write   # gates: upload SARIF to code scanning
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}   # optional; without it the sonar stage is skipped
 ```
 
 | Input | Default | Meaning |
@@ -31,6 +34,11 @@ jobs:
 | `working-directory` | `.` | Where the project's `rlp.yaml` lives inside the checkout |
 | `python-version` | `3.13` | Python used to run rlp |
 | `publish` | `true` | Publish artifacts on pushes to the default branch and on tags |
+| `sonar-host-url` | `""` | Sonar server; empty means SonarQube Cloud |
+| `sonar-organization` | `""` | SonarQube Cloud organization; empty means the repo owner |
+| `sonar-project-key` | `""` | Sonar project key; empty means `<owner>_<repo>` |
+
+The scanners and their settings are described in [quality-gates.md](quality-gates.md).
 
 Pin both the workflow ref and `rlp-version`. Third-party actions inside the workflow are pinned by commit SHA.
 
@@ -47,9 +55,9 @@ The gates run in this order and stop at the first failure (`rlp pipeline stages`
 | `lint` | the lint verb, per component | lint fails |
 | `test` | the test verb, per component | a test fails |
 | `coverage` | each declared coverage report, in its native format | line coverage is below `quality.coverage.minimum`, or the platform floor when unset |
-| `sonar` | Sonar quality gate | wired in #14; skipped until then |
+| `sonar` | Sonar analysis with the quality gate | the quality gate fails; skipped when `SONAR_TOKEN` is unset |
 | `package` | the package verb, per component | packaging fails |
-| `trivy` | Trivy filesystem and image scan | wired in #14; skipped until then |
+| `trivy` | Trivy scan of dependencies and each built image | a HIGH or CRITICAL vulnerability has a fix and no unexpired exception in `.rlp/vex.yaml` |
 | `terraform` | Terraform plan checked by OPA | wired in #16; skipped until then |
 | `deploy` | deploy to `deploy-env` | wired in #16; skipped until then |
 
@@ -59,7 +67,7 @@ The pre-commit hook for gitleaks only scans staged changes, which is nothing in 
 
 ### Results and summaries
 
-Each stage records its result in `.rlp/pipeline/results.json`. `rlp pipeline summary` renders the file as Markdown: one row per stage, then a per-component table for the verb stages. The workflow appends that to the job summary and uploads the JSON as the `rlp-gate-results` artifact for agents and later slices.
+Each stage records its result in `.rlp/pipeline/results.json`. `rlp pipeline summary` renders the file as Markdown: one row per stage, then a per-component table for the verb stages. The workflow appends that to the job summary and uploads the JSON as the `rlp-gate-results` artifact for agents and later slices. The scanners also write SARIF and JSON reports to `.rlp/pipeline/reports/`; the workflow uploads the SARIF to code scanning and adds the reports to the same artifact.
 
 ### Publishing
 
@@ -99,8 +107,9 @@ Under `act`, the deploy stage stays skipped unless the caller sets `deploy-local
 | Job summary (`$GITHUB_STEP_SUMMARY`) | written to a file, not rendered | none: the summary step also prints it to the log |
 | `actions/upload-artifact` | needs `--artifact-server-path` (set in `.actrc`) | none |
 | `publish` job | skipped: act runs `pull_request` by default, and GHCR and Releases need a real token | none: publishing isn't a gate |
+| SARIF upload to code scanning | skipped: act has no code scanning API | none: the reports stay in `.rlp/pipeline/reports/` |
 | GitHub OIDC (`id-token: write`) | not available | the AWS deploy (#16) can't run; use `deploy-local` |
 | `actions/cache` | ephemeral per run | none, only speed |
-| Runner image | `catthehacker/ubuntu:act-latest`, not the real `ubuntu-latest` | tool versions can differ; rlp pins conftest, OPA and gitleaks itself |
+| Runner image | `catthehacker/ubuntu:act-latest`, not the real `ubuntu-latest` | tool versions can differ; rlp pins conftest, OPA, gitleaks and Trivy itself |
 
 The package stage needs Docker. act mounts the host's Docker socket, so image builds work as long as Docker runs locally.
