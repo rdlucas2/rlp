@@ -43,7 +43,8 @@ def marker(python_cmd: str, name: str) -> str:
 def test_override_runs_in_component_dir(rlp, tmp_path, python_cmd, verb):
     repo = write_repo(tmp_path / "repo", [component("api", "services/api", {verb: marker(python_cmd, f"{verb}.out")})])
     (repo / "services" / "api").mkdir(parents=True)
-    result = rlp(verb, "--path", str(repo))
+    native = ["--native"] if verb in ("run", "smoke") else []  # without it, run and smoke use the local runtime
+    result = rlp(verb, *native, "--path", str(repo))
     assert result.code == 0, result.stdout + result.stderr
     assert (repo / "services" / "api" / f"{verb}.out").read_text() == "ran"
 
@@ -112,7 +113,7 @@ def test_json_mode_keeps_stdout_clean(rlp, tmp_path, python_cmd):
 
 def test_missing_command_is_reported(rlp, tmp_path):
     repo = write_repo(tmp_path / "repo", [component("api", verbs={"smoke": "definitely-not-a-command-rlp"})])
-    result = rlp("smoke", "--path", str(repo), "-o", "json")
+    result = rlp("smoke", "--native", "--path", str(repo), "-o", "json")
     assert result.code == 1
     assert result.json["steps"][0]["error"] == "command not found: definitely-not-a-command-rlp"
 

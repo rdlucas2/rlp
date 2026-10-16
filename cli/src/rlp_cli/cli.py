@@ -15,7 +15,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, artifacts, contract, coverage, pipeline, policy, publish, reports, scaffold, secrets, verbs
+from rlp_cli import __version__, artifacts, contract, coverage, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -131,6 +131,32 @@ def policy_check(ctx: click.Context, path: Path, namespaces: tuple[str, ...]) ->
 # --- standard verbs ---
 
 
+def run_verb(ctx: click.Context, name: str, components: tuple[str, ...], root: Path) -> None:
+    """Run one standard verb for each (selected) component and exit with its result."""
+    json_mode = ctx.obj["output"] == "json"
+    try:
+        doc = contract.load_repo(root)
+        steps = verbs.plan(root, doc, name, components)
+    except (contract.ContractError, verbs.VerbError) as err:
+        fail(ctx, str(err))
+    # In JSON mode the verbs' own output goes to stderr so stdout stays one JSON document.
+    stream = sys.stderr if json_mode else None
+    for step in steps:
+        if not json_mode:
+            click.echo(f"==> {step.component}: {' '.join(step.command)}", err=True)
+        verbs.execute(step, stdout=stream, stderr=stream)
+        if step.error:
+            click.echo(f"error: {step.component}: {step.error}", err=True)
+    ok = all(s.ok for s in steps)
+    if json_mode:
+        emit_json({"ok": ok, "verb": name, "steps": [s.as_dict(root) for s in steps]})
+    else:
+        for s in steps:
+            status = "ok" if s.ok else f"failed (exit {s.exit_code})"
+            click.echo(f"{name} {s.component}: {status}")
+    ctx.exit(0 if ok else 1)
+
+
 def make_verb(name: str) -> click.Command:
     @click.command(name=name, help=f"Run the {name} verb for every component (verbs.{name}, else `task {name}`).")
     @click.option("--component", "-c", "components", multiple=True, help="Only this component. Repeatable.")
@@ -138,34 +164,159 @@ def make_verb(name: str) -> click.Command:
     @output_option
     @click.pass_context
     def command(ctx: click.Context, components: tuple[str, ...], root: Path) -> None:
-        json_mode = ctx.obj["output"] == "json"
-        try:
-            doc = contract.load_repo(root)
-            steps = verbs.plan(root, doc, name, components)
-        except (contract.ContractError, verbs.VerbError) as err:
-            fail(ctx, str(err))
-        # In JSON mode the verbs' own output goes to stderr so stdout stays one JSON document.
-        stream = sys.stderr if json_mode else None
-        for step in steps:
-            if not json_mode:
-                click.echo(f"==> {step.component}: {' '.join(step.command)}", err=True)
-            verbs.execute(step, stdout=stream, stderr=stream)
-            if step.error:
-                click.echo(f"error: {step.component}: {step.error}", err=True)
-        ok = all(s.ok for s in steps)
-        if json_mode:
-            emit_json({"ok": ok, "verb": name, "steps": [s.as_dict(root) for s in steps]})
-        else:
-            for s in steps:
-                status = "ok" if s.ok else f"failed (exit {s.exit_code})"
-                click.echo(f"{name} {s.component}: {status}")
-        ctx.exit(0 if ok else 1)
+        run_verb(ctx, name, components, root)
 
     return command
 
 
+# run and smoke drive the local runtime (below); --native runs the verb instead.
 for _verb in verbs.VERBS:
-    cli.add_command(make_verb(_verb))
+    if _verb not in ("run", "smoke"):
+        cli.add_command(make_verb(_verb))
+
+
+# --- local runtime: run, smoke, down ---
+
+
+def prompt_secret(spec: runtime.SecretSpec) -> str | None:
+    if not sys.stdin.isatty():
+        return None
+    label = f"{spec.component}/{spec.name}" + (f" ({spec.description})" if spec.description else "")
+    value = click.prompt(label, hide_input=True, default="", show_default=False)
+    return value or None
+
+
+def runtime_plan(ctx: click.Context, root: Path, interactive: bool) -> runtime.Plan:
+    try:
+        doc = contract.load_repo(root)
+        secret_values = runtime.collect_secrets(root, doc, prompt_secret if interactive else None)
+        return runtime.plan(root, doc, secret_values, runtime.generated_credentials(root, doc))
+    except contract.ContractError as err:
+        fail(ctx, str(err))
+    except runtime.RuntimeFailure as err:
+        fail(ctx, str(err))
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def report_checks(ctx: click.Context, checks: list[runtime.Check], extra: dict | None = None) -> bool:
+    ok = all(c.ok for c in checks)
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": ok, **(extra or {}), "checks": [c.as_dict() for c in checks]})
+    else:
+        for c in checks:
+            click.echo(f"{c.component:12} {c.kind:6} {c.target}: {c.status}{'' if c.ok else ' (failed)'}")
+    return ok
+
+
+def runtime_options(func):
+    func = click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")(func)
+    func = click.option("--component", "-c", "components", multiple=True, help="With --native, only this component; otherwise only check this component. Repeatable.")(func)
+    func = click.option("--native", is_flag=True, help="Run the component's own verb (verbs.<name>, else `task <name>`) instead of the local runtime.")(func)
+    return func
+
+
+@cli.command(name="run")
+@runtime_options
+@click.option("--no-start", is_flag=True, help="Only write .rlp/compose.yaml and the files it needs.")
+@click.option("--no-package", is_flag=True, help="Use the zip and jar artifacts already built instead of running their package verb first.")
+@click.option("--timeout", default=180.0, show_default=True, help="Seconds to wait for every component to pass smoke after starting.")
+@output_option
+@click.pass_context
+def run_cmd(ctx: click.Context, root: Path, components: tuple[str, ...], native: bool, no_start: bool, no_package: bool, timeout: float) -> None:
+    """Start every component and its backing services locally with Docker Compose.
+
+    Generates .rlp/compose.yaml from rlp.yaml, builds and starts it in the
+    background, then waits until `rlp smoke` passes. Secrets are asked for
+    once (or read from the environment) and kept in .rlp/secrets/.
+    """
+    if native:
+        run_verb(ctx, "run", components, root)
+    json_mode = ctx.obj["output"] == "json"
+    p = runtime_plan(ctx, root, interactive=not json_mode)
+    if p.extract and not no_package:
+        package_unpacked(ctx, root, p)
+    try:
+        written = runtime.write(root, p)
+    except runtime.RuntimeFailure as err:
+        fail(ctx, str(err))
+    for path in runtime.unignored(root, [f for f in written if f.is_file()]):
+        click.echo(f"warning: git does not ignore {path.relative_to(root).as_posix()}; add .rlp/ to .gitignore", err=True)
+    if no_start:
+        if json_mode:
+            emit_json({"ok": True, "project": p.project, "compose": (root / runtime.RLP_DIR / "compose.yaml").as_posix(), "endpoints": [e.as_dict() for e in p.endpoints]})
+        else:
+            click.echo(f"wrote {(root / runtime.RLP_DIR / 'compose.yaml').as_posix()}")
+        ctx.exit(0)
+    stream = sys.stderr if json_mode else None
+    try:
+        code = runtime.up(root, p, stdout=stream, stderr=stream)
+    except runtime.RuntimeFailure as err:
+        fail(ctx, str(err))
+    if code != 0:
+        fail(ctx, f"docker compose up failed (exit {code})", code=1)
+    checks = runtime.smoke(root, p, timeout, only=components)
+    ok = report_checks(ctx, checks, {"project": p.project, "endpoints": [e.as_dict() for e in p.endpoints]})
+    if not json_mode:
+        click.echo("running; stop with: rlp down" if ok else "started, but smoke failed; logs: docker compose -p " + p.project + " logs")
+    ctx.exit(0 if ok else 1)
+
+
+def package_unpacked(ctx: click.Context, root: Path, p: runtime.Plan) -> None:
+    """Run the package verb for zip and jar functions, whose archives the runtime unpacks."""
+    names = tuple(target.split("/", 1)[1] for target in p.extract)
+    try:
+        steps = verbs.plan(root, contract.load_repo(root), "package", names)
+    except (contract.ContractError, verbs.VerbError) as err:
+        fail(ctx, str(err))
+    for step in steps:
+        click.echo(f"==> {step.component}: {' '.join(step.command)}", err=True)
+        verbs.execute(step, stdout=sys.stderr, stderr=sys.stderr)
+        if not step.ok:
+            fail(ctx, f"package {step.component} failed (exit {step.exit_code}){': ' + step.error if step.error else ''}", code=1)
+
+
+@cli.command(name="smoke")
+@runtime_options
+@click.option("--timeout", default=30.0, show_default=True, help="Seconds to keep retrying before reporting failure.")
+@output_option
+@click.pass_context
+def smoke_cmd(ctx: click.Context, root: Path, components: tuple[str, ...], native: bool, timeout: float) -> None:
+    """Check each running component: health endpoints, a function invoke, or a job's exit code."""
+    if native:
+        run_verb(ctx, "smoke", components, root)
+    p = smoke_plan(ctx, root)
+    checks = runtime.smoke(root, p, timeout, only=components)
+    ctx.exit(0 if report_checks(ctx, checks) else 1)
+
+
+def smoke_plan(ctx: click.Context, root: Path) -> runtime.Plan:
+    """The plan smoke checks against: secrets are not needed to know the endpoints."""
+    try:
+        doc = contract.load_repo(root)
+        return runtime.plan(root, doc, strict=False)
+    except (contract.ContractError, runtime.RuntimeFailure) as err:
+        fail(ctx, str(err))
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+@cli.command(name="down")
+@click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+@click.option("--volumes", "-v", is_flag=True, help="Also delete the local databases' volumes.")
+@output_option
+@click.pass_context
+def down_cmd(ctx: click.Context, root: Path, volumes: bool) -> None:
+    """Stop and remove everything `rlp run` started."""
+    json_mode = ctx.obj["output"] == "json"
+    try:
+        doc = contract.load_repo(root)
+        code = runtime.down(root, runtime.project_name(doc), volumes, stdout=sys.stderr if json_mode else None, stderr=sys.stderr if json_mode else None)
+    except (contract.ContractError, runtime.RuntimeFailure) as err:
+        fail(ctx, str(err))
+    if json_mode:
+        emit_json({"ok": code == 0, "exit_code": code})
+    elif code == 0:
+        click.echo("down: stopped")
+    ctx.exit(0 if code == 0 else 1)
 
 
 # --- reports ---
