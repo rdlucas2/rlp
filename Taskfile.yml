@@ -1,0 +1,40 @@
+# Standard rlp verbs. Every rlp repo implements these targets; the rlp CLI and
+# the golden pipeline call them by name. Verbs with nothing to do yet are
+# explicit no-ops so the contract holds from day one.
+version: "3"
+
+tasks:
+  setup:
+    desc: Install dependencies and git hooks
+    cmds:
+      - pre-commit install
+
+  lint:
+    desc: Run every pre-commit hook against the whole repo
+    cmds:
+      - pre-commit run --all-files
+
+  test:
+    desc: Run tests and write reports to declared paths
+    cmds:
+      - 'echo "No tests yet; the CLI adds them in #11"'
+
+  build:
+    desc: Compile, if applicable
+    cmds:
+      - 'echo "Nothing to build yet"'
+
+  package:
+    desc: Produce the declared artifacts
+    cmds:
+      - 'echo "Nothing to package yet"'
+
+  run:
+    desc: Start locally against local backing services
+    cmds:
+      - 'echo "Nothing to run yet; the platform stub arrives in #18"'
+
+  smoke:
+    desc: Check health endpoints of a running instance
+    cmds:
+      - 'echo "Nothing to smoke-test yet"'
