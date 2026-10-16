@@ -1,9 +1,10 @@
-"""The sonar and trivy stages, VEX exceptions and the gitleaks SARIF report.
+"""The trivy and (optional) sonar stages, VEX exceptions and the gitleaks SARIF report.
 
-Trivy's vulnerability database and SonarQube Cloud need the network and, for
-Sonar, a token, so these tests stand in for the scanners: a fake `trivy`
-replays a recorded report, and the Sonar scanner's exit code is stubbed. The
-golden-selftest workflow runs the real Trivy against the fixture repo.
+Trivy's vulnerability database needs the network and Sonar needs a server, so
+these tests stand in for the scanners: a fake `trivy` replays a recorded
+report, and the Sonar scanner's exit code is stubbed. The golden-selftest
+workflow runs the real Trivy against the fixture repo. The sast stage and
+new-code coverage are in test_new_code.py.
 """
 
 from __future__ import annotations
@@ -174,7 +175,7 @@ def doc_with(fmt: str, path: str = "reports/cov") -> dict:
     return {
         "metadata": {"name": "hello", "project": "hello"},
         "components": [
-            {"name": "api", "path": "services/api", "reports": {"coverage": {"format": fmt, "path": path}}},
+            {"name": "api", "path": "services/api", "language": "python", "reports": {"coverage": {"format": fmt, "path": path}}},
             {"name": "web", "path": "web"},
         ],
     }
@@ -190,7 +191,7 @@ def doc_with(fmt: str, path: str = "reports/cov") -> dict:
     ],
 )
 def test_coverage_format_maps_to_its_sonar_property(tmp_path, fmt, prop):
-    props = sonar.properties(tmp_path, doc_with(fmt), env={"GITHUB_REPOSITORY": "rdlucas2/hello"})
+    props = sonar.properties(tmp_path, doc_with(fmt), env={"GITHUB_REPOSITORY": "rdlucas2/hello", "SONAR_HOST_URL": sonar.SONARCLOUD})
     assert props[prop] == "services/api/reports/cov"
     assert props["sonar.sources"] == "services/api,web"
     assert props["sonar.projectKey"] == "rdlucas2_hello"
@@ -198,15 +199,16 @@ def test_coverage_format_maps_to_its_sonar_property(tmp_path, fmt, prop):
     assert props["sonar.qualitygate.wait"] == "true"
 
 
-def test_self_hosted_sonar_needs_no_organization(tmp_path):
-    props = sonar.properties(tmp_path, doc_with("cobertura"), env={"SONAR_HOST_URL": "http://localhost:9000"})
+def test_sonar_defaults_to_a_local_server_without_organization(tmp_path):
+    props = sonar.properties(tmp_path, doc_with("cobertura"), env={})
+    assert props["sonar.host.url"] == "http://localhost:9000"
     assert "sonar.organization" not in props
     assert props["sonar.projectKey"] == "hello"
 
 
 def test_sonarcloud_without_organization_is_an_error(tmp_path):
     with pytest.raises(sonar.SonarError, match="SONAR_ORGANIZATION"):
-        sonar.properties(tmp_path, doc_with("cobertura"), env={})
+        sonar.properties(tmp_path, doc_with("cobertura"), env={"SONAR_HOST_URL": sonar.SONARCLOUD})
 
 
 def test_sonar_skips_without_token(repo, monkeypatch):
