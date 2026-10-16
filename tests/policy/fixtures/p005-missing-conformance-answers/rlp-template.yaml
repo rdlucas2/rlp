@@ -1,0 +1,13 @@
+apiVersion: rlp/v1alpha1
+kind: Template
+metadata:
+  name: fixture
+  version: 0.1.0
+produces:
+  components:
+    - language: python
+      artifact: container-image
+      runtime: container-service
+conformance:
+  verbs:
+    - test

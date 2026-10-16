@@ -1,0 +1,13 @@
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: vm
+      port: 8000

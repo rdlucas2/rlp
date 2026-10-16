@@ -1,0 +1,27 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.13.0",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.main",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "main",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "engine": "postgres",
+          "storage_encrypted": true,
+          "tags": null,
+          "tags_all": {
+            "rlp:project": "fixture"
+          }
+        },
+        "after_unknown": {}
+      }
+    }
+  ]
+}

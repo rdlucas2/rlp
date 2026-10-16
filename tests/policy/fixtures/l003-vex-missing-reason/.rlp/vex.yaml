@@ -1,0 +1,3 @@
+exceptions:
+  - id: CVE-2026-0001
+    expires: '2099-12-31'

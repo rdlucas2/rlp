@@ -1,0 +1,4 @@
+exceptions:
+  - id: CVE-2026-0001
+    reason: The vulnerable function is never called.
+    expires: '2020-01-31'
