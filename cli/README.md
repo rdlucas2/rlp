@@ -35,6 +35,11 @@ Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git
 | `rlp new TEMPLATE [DEST] [--data K=V] [--defaults]` | Render a Copier template, then validate the result |
 | `rlp update [PATH] [--data K=V] [--defaults]` | Update a rendered repo to a newer template version with Copier, then validate it |
 | `rlp reports [--path ROOT]` | Print each component's report paths and the Sonar properties they map to |
+| `rlp coverage [--path ROOT]` | Check each component's coverage report against `quality.coverage.minimum`, or the platform floor |
+| `rlp secrets scan [PATH]` | Scan for secrets with the pinned gitleaks: full git history in a work tree, else the files |
+| `rlp artifacts [--path ROOT]` | Print what each component's package verb produces (image tag or file path) |
+| `rlp publish [--registry R] [--release TAG]` | Push images to a registry; attach zips and jars to a GitHub Release |
+| `rlp pipeline stages\|run\|summary` | Run the golden pipeline's gates locally, exactly as CI does ([docs/pipeline.md](../docs/pipeline.md)) |
 
 Verb overrides are split with POSIX shell rules on every OS and run without a shell: no pipes, globs or variable expansion. Put anything more complex in a Taskfile task. Write paths with forward slashes.
 
