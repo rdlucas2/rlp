@@ -1,0 +1,46 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": ".",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "requirements.txt",
+      "Class": "lang-pkgs",
+      "Type": "pip",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2018-18074",
+          "PkgName": "requests",
+          "InstalledVersion": "2.19.1",
+          "FixedVersion": "2.20.0",
+          "Severity": "HIGH",
+          "Title": "python-requests: Redirect from HTTPS to HTTP does not remove Authorization header",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2018-18074"
+        },
+        {
+          "VulnerabilityID": "CVE-2023-32681",
+          "PkgName": "requests",
+          "InstalledVersion": "2.19.1",
+          "FixedVersion": "2.31.0",
+          "Severity": "MEDIUM",
+          "Title": "python-requests: Unintended leak of Proxy-Authorization header",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2023-32681"
+        },
+        {
+          "VulnerabilityID": "CVE-2099-0001",
+          "PkgName": "urllib3",
+          "InstalledVersion": "1.23",
+          "FixedVersion": "",
+          "Severity": "CRITICAL",
+          "Title": "Unfixed critical finding the gate ignores",
+          "PrimaryURL": "https://example.invalid/cve-2099-0001"
+        }
+      ]
+    },
+    {
+      "Target": "Pipfile.lock",
+      "Class": "lang-pkgs",
+      "Type": "pipenv"
+    }
+  ]
+}
