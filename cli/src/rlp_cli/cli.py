@@ -7,6 +7,7 @@ Exit codes: 0 success, 1 the check or verb failed, 2 usage or setup error.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import json
 import sys
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, contract, policy, reports, scaffold, verbs
+from rlp_cli import __version__, artifacts, contract, coverage, pipeline, policy, publish, reports, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -196,6 +197,169 @@ def reports_cmd(ctx: click.Context, root: Path) -> None:
         click.echo("# sonar-project.properties")
         for k, v in props.items():
             click.echo(f"{k}={v}")
+
+
+# --- artifacts, coverage, secrets, publish ---
+
+
+def split_components(values: tuple[str, ...]) -> tuple[str, ...]:
+    """--component a --component b, or --components a,b (the golden workflow's input)."""
+    return tuple(c.strip() for v in values for c in v.split(",") if c.strip())
+
+
+@cli.command(name="artifacts")
+@click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+@output_option
+@click.pass_context
+def artifacts_cmd(ctx: click.Context, root: Path) -> None:
+    """Print what each component's package verb produces (image tag or file path)."""
+    try:
+        doc = contract.load_repo(root)
+    except contract.ContractError as err:
+        fail(ctx, str(err))
+    entries = artifacts.resolve(root, doc)
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "artifacts": entries})
+        return
+    for e in entries:
+        click.echo(f"{e['component']} {e['kind']}: {e.get('image') or e.get('path')}")
+
+
+@cli.command(name="coverage")
+@click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+@click.option("--component", "-c", "components", multiple=True, help="Only this component. Repeatable.")
+@output_option
+@click.pass_context
+def coverage_cmd(ctx: click.Context, root: Path, components: tuple[str, ...]) -> None:
+    """Check each component's coverage report against quality.coverage.minimum (or the platform floor)."""
+    try:
+        doc = contract.load_repo(root)
+    except contract.ContractError as err:
+        fail(ctx, str(err))
+    results = coverage.check(root, doc, split_components(components))
+    ok = all(r.ok for r in results)
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": ok, "results": [r.as_dict() for r in results]})
+    elif not results:
+        click.echo("no component declares a coverage report")
+    else:
+        for r in results:
+            if r.error:
+                click.echo(f"{r.component}: {r.error}")
+            else:
+                verdict = "ok" if r.ok else "below minimum"
+                click.echo(f"{r.component}: {r.percent:.1f}% of lines ({r.format}), minimum {r.minimum:g}%: {verdict}")
+    ctx.exit(0 if ok else 1)
+
+
+@cli.group(name="secrets")
+def secrets_group() -> None:
+    """Scan for committed secrets with the pinned gitleaks."""
+
+
+@secrets_group.command(name="scan")
+@click.argument("path", type=click.Path(path_type=Path, file_okay=False), default=".")
+@output_option
+@click.pass_context
+def secrets_scan(ctx: click.Context, path: Path) -> None:
+    """Scan PATH: its full git history in a work tree, else its files."""
+    try:
+        findings = secrets.scan(path)
+    except secrets.ScanError as err:
+        fail(ctx, str(err))
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": not findings, "findings": findings})
+    elif findings:
+        for f in findings:
+            click.echo(f"{f['file']}:{f['line']} {f['rule']} {f['commit']}".rstrip())
+        click.echo(f"{len(findings)} secret(s) found")
+    else:
+        click.echo("secrets: none found")
+    ctx.exit(1 if findings else 0)
+
+
+@cli.command(name="publish")
+@click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+@click.option("--registry", help="Container registry prefix for images, e.g. ghcr.io/owner/repo.")
+@click.option("--release", help="GitHub Release tag to attach zip and jar artifacts to.")
+@click.option("--component", "-c", "components", multiple=True, help="Only this component. Repeatable.")
+@output_option
+@click.pass_context
+def publish_cmd(ctx: click.Context, root: Path, registry: str | None, release: str | None, components: tuple[str, ...]) -> None:
+    """Publish packaged artifacts: images to the registry, zips and jars to a GitHub Release."""
+    try:
+        doc = contract.load_repo(root)
+        done = publish.publish(root, doc, registry, release, split_components(components))
+    except (contract.ContractError, publish.PublishError) as err:
+        fail(ctx, str(err), code=1)
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "published": done})
+    else:
+        for d in done:
+            click.echo(f"{d['component']} {d['kind']}: {d['status']} ({d['detail']})")
+
+
+# --- pipeline ---
+
+
+@cli.group(name="pipeline")
+def pipeline_group() -> None:
+    """Run the golden pipeline's gates locally, exactly as CI does."""
+
+
+@pipeline_group.command(name="stages")
+@output_option
+@click.pass_context
+def pipeline_stages(ctx: click.Context) -> None:
+    """List the gates in pipeline order."""
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "stages": [{"stage": n, "gates": w} for n, w in pipeline.STAGES]})
+        return
+    for name, what in pipeline.STAGES:
+        click.echo(f"{name:10} {what}")
+
+
+@pipeline_group.command(name="run")
+@click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+@click.option("--stage", "-s", "stages", multiple=True, type=click.Choice(pipeline.STAGE_NAMES), help="Run only this stage. Repeatable. Default: every stage.")
+@click.option("--component", "-c", "components", multiple=True, help="Only these components (repeatable, or comma-separated).")
+@click.option("--deploy-env", default="", help="Target environment for the deploy stage.")
+@click.option("--deploy-local", is_flag=True, help="Deploy to LocalStack instead of AWS (for act and laptops).")
+@click.option("--reset", is_flag=True, help="Discard earlier results in .rlp/pipeline/results.json first.")
+@output_option
+@click.pass_context
+def pipeline_run(ctx: click.Context, root: Path, stages: tuple[str, ...], components: tuple[str, ...], deploy_env: str, deploy_local: bool, reset: bool) -> None:
+    """Run the gates in order and stop at the first failure."""
+    json_mode = ctx.obj["output"] == "json"
+    run_ctx = pipeline.Context(
+        root=root,
+        components=split_components(components),
+        deploy_env=deploy_env,
+        deploy_local=deploy_local,
+        stream=sys.stderr if json_mode else None,
+    )
+    results = pipeline.run(run_ctx, list(stages) or pipeline.STAGE_NAMES, reset=reset)
+    ok = all(r.status != "failed" for r in results)
+    if json_mode:
+        emit_json({"ok": ok, "stages": [dataclasses.asdict(r) for r in results]})
+    else:
+        for r in results:
+            click.echo(f"{r.stage:10} {r.status:8} {r.detail}")
+    ctx.exit(0 if ok else 1)
+
+
+@pipeline_group.command(name="summary")
+@click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+@output_option
+@click.pass_context
+def pipeline_summary(ctx: click.Context, root: Path) -> None:
+    """Print the recorded gate results as Markdown (for $GITHUB_STEP_SUMMARY)."""
+    results = pipeline.load_results(root)
+    if ctx.obj["output"] == "json":
+        failed = [r for r in results.values() if r["status"] == "failed"]
+        emit_json({"ok": not failed, "stages": list(results.values())})
+        return
+    click.echo(pipeline.summary(results), nl=False)
 
 
 # --- templates ---

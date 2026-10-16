@@ -23,11 +23,19 @@ taskfile_names := ["Taskfile.yml", "Taskfile.yaml", "taskfile.yml", "taskfile.ya
 norm(p) := trim_prefix(replace(p, "\\", "/"), "./")
 
 # files[path] is the parsed contents of every input file, keyed by normalized path.
-files[path] := entry.contents if {
-	is_array(input)
-	some entry in input
-	path := norm(entry.path)
+# conftest --combine emits one entry per document, so a multi-document YAML file
+# or a top-level JSON array arrives as several entries with the same path; those
+# become a list of their documents.
+paths := {norm(entry.path) | is_array(input); some entry in input}
+
+files[path] := single_or_list(docs) if {
+	some path in paths
+	docs := [entry.contents | some entry in input; norm(entry.path) == path]
 }
+
+single_or_list(docs) := docs[0] if count(docs) == 1
+
+single_or_list(docs) := docs if count(docs) > 1
 
 has(path) if files[path]
 

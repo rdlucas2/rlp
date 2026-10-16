@@ -43,7 +43,7 @@ jobs:
           python -m pip wheel . --no-deps --wheel-dir dist
           python -m pip install dist/rlp_cli-*.whl "pytest==9.1.1" go-task-bin
       - name: Test the installed wheel
-        run: python -m pytest cli/tests -p no:cacheprovider
+        run: python -m pytest cli/tests tests/pipeline -p no:cacheprovider
       - name: Build the standalone binary
         if: matrix.binary
         id: binary

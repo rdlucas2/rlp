@@ -22,6 +22,22 @@ test_files_keyed_by_normalized_path if {
 	lib.files["svc/x.yaml"] == {"a": 1} with input as [{"path": ".\\svc\\x.yaml", "contents": {"a": 1}}]
 }
 
+test_multi_document_file_becomes_a_list if {
+	lib.files["k8s.yaml"] == [{"kind": "Service"}, {"kind": "Deployment"}] with input as [
+		{"path": "k8s.yaml", "contents": {"kind": "Service"}},
+		{"path": "k8s.yaml", "contents": {"kind": "Deployment"}},
+	]
+}
+
+test_multi_document_file_does_not_break_contract_rules if {
+	count(data.rlp.contract.presence.deny) == 0 with input as [
+		{"path": "rlp.yaml", "contents": {"apiVersion": "rlp/v1alpha1"}},
+		{"path": "Taskfile.yml", "contents": {}},
+		{"path": "results.json", "contents": {"stage": "a"}},
+		{"path": "results.json", "contents": {"stage": "b"}},
+	]
+}
+
 test_files_empty_without_combined_input if {
 	count(lib.files) == 0 with input as {"apiVersion": "rlp/v1alpha1"}
 }
