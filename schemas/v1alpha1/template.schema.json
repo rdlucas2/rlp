@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rdlucas2/rlp/main/schemas/v1alpha1/template.schema.json",
+  "title": "rlp Template contract (rlp-template.yaml)",
+  "description": "What an rlp Copier template produces, what it needs, and how its conformance is checked. Lives at the template repo root as rlp-template.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "produces", "conformance"],
+  "properties": {
+    "apiVersion": {
+      "description": "Contract version. Only rlp/v1alpha1 exists today.",
+      "const": "rlp/v1alpha1"
+    },
+    "kind": {
+      "const": "Template"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "produces": {
+      "$ref": "#/$defs/produces"
+    },
+    "requires": {
+      "$ref": "#/$defs/requires"
+    },
+    "conformance": {
+      "$ref": "#/$defs/conformance"
+    }
+  },
+  "$defs": {
+    "name": {
+      "description": "Lowercase DNS label: letters, digits and hyphens, starting with a letter.",
+      "type": "string",
+      "pattern": "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "relativePath": {
+      "description": "Path relative to the template repo root, using forward slashes.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![/\\\\])(?![A-Za-z]:)[^\\\\]*$"
+    },
+    "verbName": {
+      "enum": ["setup", "lint", "test", "build", "package", "run", "smoke"]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "version": {
+          "description": "Semantic version of the template.",
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+        },
+        "description": {
+          "type": "string"
+        },
+        "owners": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "produces": {
+      "description": "What a rendered repo contains. The conformance loop checks rendered output against it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["components"],
+      "properties": {
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["language", "artifact", "runtime"],
+            "properties": {
+              "language": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9+#-]*$"
+              },
+              "artifact": {
+                "enum": ["container-image", "zip", "jar", "static"]
+              },
+              "runtime": {
+                "enum": ["container-service", "function", "static-site", "job"]
+              },
+              "services": {
+                "description": "Backing service kinds the rendered component can declare.",
+                "type": "array",
+                "items": {
+                  "enum": ["postgres", "redis", "s3", "sqs", "sns"]
+                },
+                "uniqueItems": true
+              },
+              "coverageFormat": {
+                "enum": ["cobertura", "lcov", "jacoco", "opencover"]
+              }
+            }
+          }
+        },
+        "files": {
+          "description": "Files every rendered repo is guaranteed to contain.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relativePath"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "requires": {
+      "description": "What rendering and running the output needs.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rlp": {
+          "description": "Version range of the rlp CLI, for example >=0.1.0.",
+          "type": "string",
+          "minLength": 1
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "description": "Version range, for example >=0.5.",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "conformance": {
+      "description": "How the template conformance loop renders and checks this template.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["answers"],
+      "properties": {
+        "answers": {
+          "description": "Copier answers file used to render the template under test.",
+          "$ref": "#/$defs/relativePath"
+        },
+        "verbs": {
+          "description": "Verbs that must succeed on the rendered repo, in order.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/verbName"
+          },
+          "uniqueItems": true,
+          "default": ["setup", "lint", "test", "build", "package", "run", "smoke"]
+        }
+      }
+    }
+  }
+}

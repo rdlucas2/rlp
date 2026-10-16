@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rdlucas2/rlp/main/schemas/v1alpha1/repo.schema.json",
+  "title": "rlp Repo contract (rlp.yaml)",
+  "description": "How to build, test, package and run each component of an app repo. Lives at the repo root as rlp.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "components"],
+  "properties": {
+    "apiVersion": {
+      "description": "Contract version. Only rlp/v1alpha1 exists today.",
+      "const": "rlp/v1alpha1"
+    },
+    "kind": {
+      "const": "Repo"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "components": {
+      "description": "Every deployable or buildable unit in the repo. A single-service repo has one entry.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/component"
+      }
+    },
+    "quality": {
+      "$ref": "#/$defs/quality"
+    }
+  },
+  "$defs": {
+    "name": {
+      "description": "Lowercase DNS label: letters, digits and hyphens, starting with a letter.",
+      "type": "string",
+      "pattern": "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "relativePath": {
+      "description": "Path relative to the component's path, using forward slashes.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![/\\\\])(?![A-Za-z]:)[^\\\\]*$"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "project"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "project": {
+          "description": "Id of the project record this repo belongs to. In slice 0 the record is this file.",
+          "$ref": "#/$defs/name"
+        },
+        "description": {
+          "type": "string"
+        },
+        "owners": {
+          "description": "GitHub users or teams that own the repo.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "template": {
+          "description": "Set when the repo was rendered from an rlp template. Copier's .copier-answers.yml then holds the answers.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": {
+              "description": "Copier source, for example gh:rdlucas2/rlp-template-python-fastapi.",
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "description": "Template git ref the repo was last rendered or updated from.",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "language", "artifact", "runtime"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "path": {
+          "description": "Component directory relative to the repo root. Verbs run here.",
+          "default": ".",
+          "$ref": "#/$defs/relativePath"
+        },
+        "language": {
+          "description": "Primary language, for example python, go, typescript, java.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9+#-]*$"
+        },
+        "artifact": {
+          "$ref": "#/$defs/artifact"
+        },
+        "runtime": {
+          "$ref": "#/$defs/runtime"
+        },
+        "verbs": {
+          "$ref": "#/$defs/verbs"
+        },
+        "reports": {
+          "$ref": "#/$defs/reports"
+        },
+        "config": {
+          "description": "Configuration the component reads from environment variables.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/configEntry"
+          }
+        },
+        "services": {
+          "description": "Backing services the component needs. Compose containers locally, managed AWS services in the cloud.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/service"
+          }
+        },
+        "telemetry": {
+          "$ref": "#/$defs/telemetry"
+        }
+      }
+    },
+    "artifact": {
+      "description": "What the package verb produces. Separate from how it runs.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": ["container-image", "zip", "jar", "static"]
+        },
+        "dockerfile": {
+          "description": "Dockerfile for container-image artifacts.",
+          "default": "Dockerfile",
+          "$ref": "#/$defs/relativePath"
+        },
+        "path": {
+          "description": "Where package writes the artifact (zip, jar or static directory).",
+          "$ref": "#/$defs/relativePath"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "enum": ["zip", "jar", "static"]
+              }
+            }
+          },
+          "then": {
+            "required": ["path"]
+          }
+        }
+      ]
+    },
+    "runtime": {
+      "description": "How the artifact runs. Each kind maps to a local and an AWS target.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": ["container-service", "function", "static-site", "job"]
+        },
+        "port": {
+          "description": "Port a container-service listens on.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "health": {
+          "description": "HTTP paths the smoke verb and load balancer check.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "liveness": {
+              "$ref": "#/$defs/httpPath"
+            },
+            "readiness": {
+              "$ref": "#/$defs/httpPath"
+            }
+          }
+        },
+        "handler": {
+          "description": "Entry point of a function, for example app.main.handler.",
+          "type": "string",
+          "minLength": 1
+        },
+        "schedule": {
+          "description": "Cron or rate expression for a scheduled job.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "const": "container-service"
+              }
+            }
+          },
+          "then": {
+            "required": ["port"]
+          }
+        },
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "const": "function"
+              }
+            }
+          },
+          "then": {
+            "required": ["handler"]
+          }
+        }
+      ]
+    },
+    "httpPath": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "verbs": {
+      "description": "Command overrides for the standard verbs. When verbs.<name> is absent, the verb runs `task <name>` in the component's path.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "setup": {
+          "$ref": "#/$defs/verbCommand",
+          "default": "task setup"
+        },
+        "lint": {
+          "$ref": "#/$defs/verbCommand",
+          "default": "task lint"
+        },
+        "test": {
+          "$ref": "#/$defs/verbCommand",
+          "default": "task test"
+        },
+        "build": {
+          "$ref": "#/$defs/verbCommand",
+          "default": "task build"
+        },
+        "package": {
+          "$ref": "#/$defs/verbCommand",
+          "default": "task package"
+        },
+        "run": {
+          "$ref": "#/$defs/verbCommand",
+          "default": "task run"
+        },
+        "smoke": {
+          "$ref": "#/$defs/verbCommand",
+          "default": "task smoke"
+        }
+      }
+    },
+    "verbCommand": {
+      "description": "Command line run in the component's path instead of the default `task <name>`.",
+      "type": "string",
+      "minLength": 1
+    },
+    "reports": {
+      "description": "Where the test verb writes its reports. Coverage stays in the language's native format.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "junit": {
+          "description": "JUnit XML test results.",
+          "$ref": "#/$defs/relativePath"
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "path"],
+          "properties": {
+            "format": {
+              "enum": ["cobertura", "lcov", "jacoco", "opencover"]
+            },
+            "path": {
+              "$ref": "#/$defs/relativePath"
+            }
+          }
+        }
+      }
+    },
+    "configEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "description": "Environment variable name.",
+          "type": "string",
+          "pattern": "^[A-Z_][A-Z0-9_]*$"
+        },
+        "description": {
+          "type": "string"
+        },
+        "default": {
+          "description": "Value used when nothing else sets it.",
+          "type": "string"
+        },
+        "from": {
+          "description": "Derive the value from a declared service, for example service:db.",
+          "type": "string",
+          "pattern": "^service:[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "secret": {
+          "description": "Stored in a secret store, never in plain config.",
+          "type": "boolean",
+          "default": false
+        },
+        "required": {
+          "description": "The component fails to start without it.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "enum": ["postgres", "redis", "s3", "sqs", "sns"]
+        },
+        "version": {
+          "description": "Engine version, for postgres and redis.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "telemetry": {
+      "description": "OpenTelemetry settings. rlp injects the standard OTEL_* environment variables.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "serviceName": {
+          "description": "OTEL_SERVICE_NAME. Defaults to <metadata.name>-<component name>.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minimum"],
+          "properties": {
+            "minimum": {
+              "description": "Line coverage percentage the gate requires. Policy enforces the platform floor.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    }
+  }
+}

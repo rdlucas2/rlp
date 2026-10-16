@@ -8,6 +8,10 @@ build/
 .pytest_cache/
 .coverage
 coverage.xml
+reports/
+
+# go-task checksums
+.task/
 
 # rlp generated local state (compose files, .env, loop state)
 .rlp/*

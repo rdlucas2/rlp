@@ -1,0 +1,14 @@
+# Invalid: version is not semver.
+# expect-error: /metadata/version
+apiVersion: rlp/v1alpha1
+kind: Template
+metadata:
+  name: fixture
+  version: v1
+produces:
+  components:
+    - language: python
+      artifact: container-image
+      runtime: container-service
+conformance:
+  answers: tests/default-answers.yml

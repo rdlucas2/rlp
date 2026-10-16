@@ -1,0 +1,14 @@
+# Invalid: artifact kind is not in the enum.
+# expect-error: /produces/components/0/artifact
+apiVersion: rlp/v1alpha1
+kind: Template
+metadata:
+  name: fixture
+  version: 0.1.0
+produces:
+  components:
+    - language: python
+      artifact: wheel
+      runtime: container-service
+conformance:
+  answers: tests/default-answers.yml

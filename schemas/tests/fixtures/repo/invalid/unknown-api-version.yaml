@@ -1,0 +1,15 @@
+# Invalid: apiVersion is not rlp/v1alpha1.
+# expect-error: /apiVersion
+apiVersion: rlp/v2
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: container-service
+      port: 8000

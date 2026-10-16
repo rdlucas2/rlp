@@ -1,0 +1,69 @@
+# Valid: one component of every artifact and runtime kind in a single repo.
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: container-service
+      port: 8000
+  - name: worker
+    path: worker
+    language: python
+    artifact:
+      kind: zip
+      path: dist/worker.zip
+    runtime:
+      kind: function
+      handler: worker.main.handler
+    services:
+      - name: jobs
+        kind: sqs
+      - name: uploads
+        kind: s3
+    config:
+      - name: QUEUE_URL
+        from: service:jobs
+  - name: nightly
+    path: nightly
+    language: go
+    artifact:
+      kind: container-image
+      dockerfile: build/Dockerfile
+    runtime:
+      kind: job
+      schedule: cron(0 3 * * ? *)
+    verbs:
+      build: go build ./...
+      test: go test ./... -coverprofile=reports/cover.out
+  - name: web
+    path: web
+    language: typescript
+    artifact:
+      kind: static
+      path: dist
+    runtime:
+      kind: static-site
+    reports:
+      junit: reports/junit.xml
+      coverage:
+        format: lcov
+        path: coverage/lcov.info
+  - name: billing
+    path: billing
+    language: java
+    artifact:
+      kind: jar
+      path: target/billing.jar
+    runtime:
+      kind: container-service
+      port: 8080
+    reports:
+      coverage:
+        format: jacoco
+        path: target/site/jacoco/jacoco.xml

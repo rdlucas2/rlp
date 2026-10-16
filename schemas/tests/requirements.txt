@@ -1,0 +1,4 @@
+# Test dependencies for the contract schemas. `task test` installs them into .venv.
+jsonschema==4.26.0
+pytest==9.1.1
+PyYAML==6.0.3
