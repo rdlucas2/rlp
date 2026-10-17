@@ -1,0 +1,28 @@
+# Certifies the FastAPI template with this checkout's rlp, so a change to the
+# CLI, the policy bundle or template-conformance.yml that would break the
+# template fails here before it merges. The weekly run catches drift: new CVEs
+# in the rendered repo's dependencies or base image.
+name: template-conformance-selftest
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 5 * * 1"  # Mondays 05:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: template-conformance-selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-fastapi:
+    uses: ./.github/workflows/template-conformance.yml
+    with:
+      rlp-version: "path:."
+      template-repository: rdlucas2/rlp-template-python-fastapi
+      template-ref: main

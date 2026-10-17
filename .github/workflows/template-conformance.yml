@@ -1,0 +1,143 @@
+# Template conformance: certify an rlp Copier template. One reusable workflow
+# every template repo calls.
+#
+#   on:
+#     pull_request:
+#     push:
+#       branches: [main]
+#       tags: ["v*"]
+#     schedule:
+#       - cron: "17 6 * * 1"   # weekly: catch new CVEs in the rendered repo
+#   jobs:
+#     conformance:
+#       uses: rdlucas2/rlp/.github/workflows/template-conformance.yml@<rlp git ref>
+#       with:
+#         rlp-version: "git:<rlp git ref>"
+#         release: true
+#       permissions:
+#         contents: write   # release: publish the GitHub Release of a certified tag
+#
+# The certify job runs `rlp template certify`: render the template with its
+# conformance.answers, run the golden gates on the result (deploy excluded),
+# any other verb in conformance.verbs, then rlp run, rlp smoke and rlp down.
+# The release job publishes a GitHub Release for a tag only when certify
+# passed, with the conformance report attached: that release is the
+# certification marker. See docs/conformance.md.
+name: template-conformance
+
+on:
+  workflow_call:
+    inputs:
+      rlp-version:
+        description: "rlp-cli to install: a PyPI version (0.2.0), git:<ref> or path:<dir in the calling repo>"
+        type: string
+        required: true
+      template-repository:
+        description: Template repo to certify, as owner/name. Empty means the calling repo.
+        type: string
+        default: ""
+      template-ref:
+        description: Git ref of template-repository to check out. Empty means its default branch.
+        type: string
+        default: ""
+      working-directory:
+        description: Template root (where rlp-template.yaml lives), relative to the template checkout
+        type: string
+        default: "."
+      python-version:
+        description: Python used to run rlp
+        type: string
+        default: "3.13"
+      release:
+        description: On a tag push, publish a GitHub Release for the tag once the template is certified
+        type: boolean
+        default: false
+
+# No workflow-level permissions: a called workflow may not ask for more than
+# its caller grants. certify only reads; release inherits the caller's grant.
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      RLP_SPEC: ${{ inputs.rlp-version }}
+      TEMPLATE_DIR: >-
+        ${{ inputs.template-repository != '' && format('.rlp-template/{0}', inputs.working-directory) || inputs.working-directory }}
+      REPORT: ${{ github.workspace }}/.rlp-conformance/conformance.json
+      SEMGREP_VERSION: "1.179.0"  # keep in step with SEMGREP_VERSION in cli/src/rlp_cli/tools.py
+      UV_VERSION: "0.11.32"       # keep in step with release.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check out the template
+        if: inputs.template-repository != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ inputs.template-repository }}
+          ref: ${{ inputs.template-ref }}
+          path: .rlp-template
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install rlp
+        run: |
+          case "$RLP_SPEC" in
+            git:*) spec="rlp-cli @ git+https://github.com/rdlucas2/rlp@${RLP_SPEC#git:}" ;;
+            path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
+            *) spec="rlp-cli==${RLP_SPEC}" ;;
+          esac
+          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin "semgrep==$SEMGREP_VERSION" "uv==$UV_VERSION"
+          rlp --version
+      - name: Certify
+        run: rlp template certify "$TEMPLATE_DIR" --report "$REPORT"
+      - name: Conformance summary
+        if: always()
+        run: |
+          if [ -f "$REPORT" ]; then
+            rlp template summary "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+            rlp template summary "$REPORT"
+          fi
+      - name: Upload the conformance report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: rlp-conformance-report
+          path: ${{ env.REPORT }}
+          if-no-files-found: warn
+
+  # The certification marker: a tag gets a GitHub Release only when certify passed.
+  release:
+    needs: certify
+    if: inputs.release && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    # Inherits the caller's grant, which must include contents: write.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: rlp-conformance-report
+          path: ${{ runner.temp }}/conformance
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          report="$RUNNER_TEMP/conformance/conformance.json"
+          python - "$report" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          if not report.get("certified"):
+              sys.exit("::error::the conformance report does not certify this commit")
+          PY
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh release create "$TAG" "$report" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$TAG" --notes "Certified by rlp template conformance ($run_url)."
