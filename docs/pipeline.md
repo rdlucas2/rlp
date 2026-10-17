@@ -33,6 +33,10 @@ jobs:
 | `aws-plan-role-arn` | `""` | Read-only role pull requests assume through GitHub OIDC to plan |
 | `aws-deploy-role-arn` | `""` | Role the default branch assumes through GitHub OIDC to apply |
 | `tf-state-bucket` | `""` | Terraform state bucket from the bootstrap stack |
+
+| Secret | Meaning |
+| --- | --- |
+| `infracost-api-key` | Optional. Infracost API key for the `cost` stage; pass `${{ secrets.INFRACOST_API_KEY }}` |
 | `components` | `""` | Comma-separated component names; empty means all |
 | `working-directory` | `.` | Where the project's `rlp.yaml` lives inside the checkout |
 | `python-version` | `3.13` | Python used to run rlp |
@@ -60,6 +64,7 @@ The gates run in this order and stop at the first failure (`rlp pipeline stages`
 | `package` | the package verb, per component | packaging fails |
 | `trivy` | Trivy scan of dependencies and each built image | a HIGH or CRITICAL vulnerability has a fix and no unexpired exception in `.rlp/vex.yaml` |
 | `terraform` | `rlp infra render`, `terraform plan`, then the policy bundle's `rlp.terraform` rules on the plan JSON; runs in the `deploy` job | the plan breaks a rule (required tags, public S3, unencrypted storage); skipped without `deploy-env` |
+| `cost` | Infracost estimate of that plan's monthly cost and its change against what's deployed; runs in the `deploy` job | the estimate is above `quality.cost.monthlyBudget`, or a budget is declared without `INFRACOST_API_KEY`; skipped with neither |
 | `deploy` | `terraform apply` of that saved plan, then each component's readiness path through the load balancer; default branch only | apply fails, the service never gets healthy, or readiness doesn't answer 200 within 5 minutes |
 
 `setup` isn't in the original stage list in #13. It runs before lint because lint and test need the component's dependencies installed.

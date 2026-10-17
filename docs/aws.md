@@ -98,9 +98,39 @@ The `deploy` job in `golden.yml` runs after the gates (and after publish, on the
 1. It installs the pinned Terraform, checked against HashiCorp's published SHA256.
 2. It exchanges the job's GitHub OIDC token for a session of `rlp-plan` (pull requests and other refs) or `rlp-deploy` (pushes to the default branch). `rlp-deploy` trusts only the default branch.
 3. The `terraform` stage renders the stack, runs `terraform init` and `terraform plan`, and checks the plan JSON with the `rlp.terraform` policy rules. A plan that drops a required tag, makes an S3 bucket public or stores data unencrypted fails here.
-4. On the default branch, the `deploy` stage applies that saved plan. ECS waits for the service to become stable and rolls back if the new tasks never get healthy. The stage then requests each readiness path through the load balancer until it answers 200 (5 minutes at most).
+4. The `cost` stage prices the plan with Infracost (see below). A plan over the repo's budget stops here.
+5. On the default branch, the `deploy` stage applies that saved plan. ECS waits for the service to become stable and rolls back if the new tasks never get healthy. The stage then requests each readiness path through the load balancer until it answers 200 (5 minutes at most).
 
-The job uploads `results.json` and the plan JSON as the `rlp-deploy-results` artifact.
+The job uploads `results.json`, the plan JSON and Infracost's report as the `rlp-deploy-results` artifact.
+
+## Cost estimates
+
+The `cost` stage runs the pinned [Infracost](https://www.infracost.io/) CLI on the plan JSON. It puts the estimated monthly total, the change against what's deployed now, and the most expensive resources in the job summary and in `results.json`, and writes Infracost's full report to `.rlp/pipeline/reports/infracost.json`.
+
+Set a budget in `rlp.yaml` to make it a gate. The stage fails when the estimate for an environment is above it, before anything is applied:
+
+```yaml
+quality:
+  cost:
+    monthlyBudget: 50   # USD per month, per environment
+```
+
+Infracost prices resources through its hosted pricing API, which needs a free API key (`infracost auth login`, or sign up at infracost.io). Add it as the repository secret `INFRACOST_API_KEY` and pass it to the golden pipeline:
+
+```yaml
+    uses: rdlucas2/rlp/.github/workflows/golden.yml@<ref>
+    secrets:
+      infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+```
+
+Infracost needs no AWS credentials: it reads the plan JSON and asks its API for the prices of the resource types it finds. With no key, the stage is skipped when no budget is declared, and fails when one is, so a budget is never silently unchecked. If Infracost can't reach its pricing API, or finds none of the plan's resources, the stage fails rather than report $0.
+
+What the estimate covers: what Terraform declares for the app stack, mainly the Fargate task size and count. It leaves out:
+
+- usage-based charges such as data transfer and log ingestion (no `infracost-usage.yml` yet)
+- the shared platform (the load balancer costs about the same however many services use it) and the bootstrap stack
+
+Locally: `INFRACOST_API_KEY=... rlp pipeline run -s terraform -s cost --deploy-env dev`.
 
 ## Locally
 
