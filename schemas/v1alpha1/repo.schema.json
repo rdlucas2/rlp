@@ -389,6 +389,18 @@
               "maximum": 100
             }
           }
+        },
+        "cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["monthlyBudget"],
+          "properties": {
+            "monthlyBudget": {
+              "description": "Most the repo's AWS stack may cost per month per environment, in USD, as Infracost estimates it. The cost stage fails a plan above it.",
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
         }
       }
     }

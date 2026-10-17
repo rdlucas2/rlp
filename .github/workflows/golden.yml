@@ -65,6 +65,12 @@ on:
         description: Publish artifacts on pushes to the default branch and on tags
         type: boolean
         default: true
+    secrets:
+      infracost-api-key:
+        description: >-
+          Infracost API key for the cost stage. Without it the stage is skipped,
+          unless rlp.yaml declares quality.cost.monthlyBudget.
+        required: false
 
 # No workflow-level permissions: a called workflow may not ask for more than
 # its caller grants, even for a job that ends up skipped. The gates job reads the
@@ -189,8 +195,8 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then args+=(--release "$GITHUB_REF_NAME"); fi
           rlp publish "${args[@]}"
 
-  # Plan on every run with deploy-env; apply only on pushes to the default
-  # branch. AWS credentials come from GitHub OIDC: the job exchanges its ID
+  # Plan and estimate the cost on every run with deploy-env; apply only on
+  # pushes to the default branch. AWS credentials come from GitHub OIDC: the job exchanges its ID
   # token for a short-lived session of the plan or deploy role, so no AWS keys
   # live in GitHub secrets. See docs/aws.md.
   deploy:
@@ -214,6 +220,7 @@ jobs:
       RLP_DEPLOY_LOCAL: ${{ inputs.deploy-local }}
       RLP_TF_STATE_BUCKET: ${{ inputs.tf-state-bucket }}
       AWS_REGION: ${{ inputs.aws-region }}
+      INFRACOST_API_KEY: ${{ secrets.infracost-api-key }}
       APPLY: >-
         ${{ github.event_name == 'push' &&
         github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -284,6 +291,11 @@ jobs:
           args=(--reset --stage terraform --component "$RLP_COMPONENTS" --deploy-env "$RLP_DEPLOY_ENV")
           if [ "$RLP_DEPLOY_LOCAL" = "true" ]; then args+=(--deploy-local); fi
           rlp pipeline run "${args[@]}"
+      - name: cost
+        run: |
+          args=(--stage cost --component "$RLP_COMPONENTS" --deploy-env "$RLP_DEPLOY_ENV")
+          if [ "$RLP_DEPLOY_LOCAL" = "true" ]; then args+=(--deploy-local); fi
+          rlp pipeline run "${args[@]}"
       - name: deploy
         if: env.APPLY == 'true'
         run: |
@@ -306,4 +318,5 @@ jobs:
           path: |
             ${{ inputs.working-directory }}/.rlp/pipeline/results.json
             ${{ inputs.working-directory }}/.rlp/infra/*/policy/plan.json
+            ${{ inputs.working-directory }}/.rlp/pipeline/reports/infracost.json
           if-no-files-found: warn

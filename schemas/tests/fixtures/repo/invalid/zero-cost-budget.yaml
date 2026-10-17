@@ -1,0 +1,18 @@
+# Invalid: a monthly budget must be more than zero.
+# expect-error: /quality/cost/monthlyBudget
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: container-service
+      port: 8000
+quality:
+  cost:
+    monthlyBudget: 0

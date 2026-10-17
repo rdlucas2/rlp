@@ -23,7 +23,7 @@ Binaries exist for Linux (x86_64, arm64), macOS (Apple silicon) and Windows (x86
 - **macOS**: Gatekeeper may say the binary "cannot be opened". The install script prints the fix: `xattr -d com.apple.quarantine ~/.local/bin/rlp`.
 - **Windows**: SmartScreen may warn on first run. Choose **More info**, then **Run anyway**.
 
-Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git (for `rlp new` and `rlp update` with git templates) Docker with Compose v2 (for `rlp run`, `rlp smoke` and `rlp down`) and Terraform 1.10 or later (for `rlp infra` and the terraform and deploy stages). `rlp policy check` downloads the pinned conftest on first use into your user cache, checked against its published SHA256 (`RLP_TOOLS_DIR` overrides the location).
+Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git (for `rlp new` and `rlp update` with git templates) Docker with Compose v2 (for `rlp run`, `rlp smoke` and `rlp down`) and Terraform 1.10 or later (for `rlp infra` and the terraform and deploy stages). `rlp policy check` downloads the pinned conftest (and the cost stage the pinned Infracost) on first use into your user cache, checked against its published SHA256 (`RLP_TOOLS_DIR` overrides the location).
 
 ## Commands
 

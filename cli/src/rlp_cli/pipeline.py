@@ -18,7 +18,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from rlp_cli import baseline, contract, coverage, infra, policy, sast, secrets, sonar, trivy, verbs, vex
+from rlp_cli import baseline, contract, cost, coverage, infra, policy, sast, secrets, sonar, trivy, verbs, vex
 
 # (stage, what it gates). Order is the pipeline order.
 STAGES = [
@@ -34,6 +34,7 @@ STAGES = [
     ("package", "the package verb, per component"),
     ("trivy", "Trivy scan of dependencies and built images"),
     ("terraform", "Terraform plan for deploy-env, checked by the policy bundle"),
+    ("cost", "Infracost estimate of the plan's monthly cost, against quality.cost.monthlyBudget"),
     ("deploy", "apply the saved plan, then check readiness through the load balancer"),
 ]
 STAGE_NAMES = [name for name, _ in STAGES]
@@ -216,6 +217,35 @@ def stage_terraform(ctx: Context) -> StageResult:
     return StageResult("terraform", "passed", f"plan for {ctx.deploy_env}: {shown}; policy passed", components=per, data=data)
 
 
+def stage_cost(ctx: Context) -> StageResult:
+    skip = deploy_skip(ctx, "cost")
+    if skip:
+        return skip
+    limit = cost.budget(ctx.doc())
+    if not cost.api_key():
+        if limit is not None:
+            return StageResult("cost", "failed", f"rlp.yaml sets a monthly budget of ${limit:,.2f}, but INFRACOST_API_KEY is not set, so it can't be checked")
+        return StageResult("cost", "skipped", "INFRACOST_API_KEY is not set and no budget is declared (see docs/aws.md)")
+    stack = infra.Stack(env=ctx.deploy_env, dir=infra.stack_dir(ctx.root, ctx.deploy_env))
+    if not stack.plan_json.is_file():
+        return StageResult("cost", "failed", f"no plan JSON at {stack.plan_json.relative_to(ctx.root).as_posix()}; run the terraform stage first")
+    report = REPORTS / "infracost.json"
+    estimate = cost.parse(cost.run(stack.plan_json, ctx.root / report))
+    planned = sum(
+        1 for rc in json.loads(stack.plan_json.read_text(encoding="utf-8")).get("resource_changes") or []
+        if set(rc.get("change", {}).get("actions") or []) & {"create", "update"}
+    )
+    if planned and not estimate.detected:
+        return StageResult("cost", "failed", f"the plan creates or updates {planned} resource(s), but Infracost found none in it, so the estimate can't be trusted")
+    data = {"env": ctx.deploy_env, "estimate": estimate.as_dict(), "budget": limit, "report": report.as_posix()}
+    detail = f"{ctx.deploy_env}: {estimate.text()}"
+    if limit is None:
+        return StageResult("cost", "passed", f"{detail}; no budget declared", data=data)
+    if estimate.monthly > limit:
+        return StageResult("cost", "failed", f"{detail}; over the monthly budget of {cost.fmt(limit, estimate.currency)}", data=data)
+    return StageResult("cost", "passed", f"{detail}; within the monthly budget of {cost.fmt(limit, estimate.currency)}", data=data)
+
+
 def stage_deploy(ctx: Context) -> StageResult:
     skip = deploy_skip(ctx, "deploy")
     if skip:
@@ -245,6 +275,7 @@ RUNNERS = {
     "package": lambda ctx: run_verb(ctx, "package"),
     "trivy": stage_trivy,
     "terraform": stage_terraform,
+    "cost": stage_cost,
     "deploy": stage_deploy,
 }
 
@@ -277,7 +308,7 @@ def run(ctx: Context, stages: list[str], reset: bool = False) -> list[StageResul
         start = time.monotonic()
         try:
             result = RUNNERS[name](ctx)
-        except (contract.ContractError, verbs.VerbError, policy.PolicyError, secrets.ScanError, coverage.CoverageError, sonar.SonarError, trivy.ScanError, vex.VexError, sast.SastError, baseline.BaselineError, infra.InfraError) as err:
+        except (contract.ContractError, verbs.VerbError, policy.PolicyError, secrets.ScanError, coverage.CoverageError, sonar.SonarError, trivy.ScanError, vex.VexError, sast.SastError, baseline.BaselineError, infra.InfraError, cost.CostError) as err:
             result = StageResult(name, "failed", str(err))
         result.seconds = round(time.monotonic() - start, 3)
         ran.append(result)
