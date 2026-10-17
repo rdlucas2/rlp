@@ -21,13 +21,18 @@ jobs:
       contents: write          # publish: attach zips and jars to GitHub Releases
       packages: write          # publish: push images to GHCR
       security-events: write   # gates: upload SARIF to code scanning
+      # id-token: write        # deploy: only with deploy-env, for AWS through GitHub OIDC
 ```
 
 | Input | Default | Meaning |
 | --- | --- | --- |
 | `rlp-version` | required | rlp-cli to install: a PyPI version (`0.2.0`), `git:<ref>`, or `path:<dir>` inside the checkout |
-| `deploy-env` | `""` | Target environment for the deploy stage; empty skips deploy |
-| `deploy-local` | `false` | Deploy to LocalStack instead of AWS (for `act`) |
+| `deploy-env` | `""` | AWS environment to deploy to (plan on PRs, apply on the default branch); empty skips the `deploy` job. See [aws.md](aws.md) |
+| `deploy-local` | `false` | Target LocalStack instead of AWS (for `act`); the AWS stages skip |
+| `aws-region` | `us-east-1` | Region of the environment |
+| `aws-plan-role-arn` | `""` | Read-only role pull requests assume through GitHub OIDC to plan |
+| `aws-deploy-role-arn` | `""` | Role the default branch assumes through GitHub OIDC to apply |
+| `tf-state-bucket` | `""` | Terraform state bucket from the bootstrap stack |
 | `components` | `""` | Comma-separated component names; empty means all |
 | `working-directory` | `.` | Where the project's `rlp.yaml` lives inside the checkout |
 | `python-version` | `3.13` | Python used to run rlp |
@@ -54,8 +59,8 @@ The gates run in this order and stop at the first failure (`rlp pipeline stages`
 | `sonar` | optional SonarQube analysis on your machine; not run by the workflow | the quality gate fails; skipped when `SONAR_TOKEN` is unset |
 | `package` | the package verb, per component | packaging fails |
 | `trivy` | Trivy scan of dependencies and each built image | a HIGH or CRITICAL vulnerability has a fix and no unexpired exception in `.rlp/vex.yaml` |
-| `terraform` | Terraform plan checked by OPA | wired in #16; skipped until then |
-| `deploy` | deploy to `deploy-env` | wired in #16; skipped until then |
+| `terraform` | `rlp infra render`, `terraform plan`, then the policy bundle's `rlp.terraform` rules on the plan JSON; runs in the `deploy` job | the plan breaks a rule (required tags, public S3, unencrypted storage); skipped without `deploy-env` |
+| `deploy` | `terraform apply` of that saved plan, then each component's readiness path through the load balancer; default branch only | apply fails, the service never gets healthy, or readiness doesn't answer 200 within 5 minutes |
 
 `setup` isn't in the original stage list in #13. It runs before lint because lint and test need the component's dependencies installed.
 
@@ -94,7 +99,7 @@ cp .secrets.example .secrets     # optional; the gates need no secrets
 act pull_request -W .github/workflows/golden-selftest.yml
 ```
 
-Under `act`, the deploy stage stays skipped unless the caller sets `deploy-local: true` (or you run `rlp pipeline run -s deploy --deploy-local`). Then it targets LocalStack, never AWS.
+Under `act`, the `deploy` job runs only if the caller sets `deploy-env`. Set `deploy-local: true` too: the AWS stages then skip, because there is no OIDC token under act and LocalStack's free edition has no ECS. `act` never reaches AWS.
 
 ### Known not to run the same under act
 
@@ -104,7 +109,7 @@ Under `act`, the deploy stage stays skipped unless the caller sets `deploy-local
 | `actions/upload-artifact` | needs `--artifact-server-path` (set in `.actrc`) | none |
 | `publish` job | skipped: act runs `pull_request` by default, and GHCR and Releases need a real token | none: publishing isn't a gate |
 | SARIF upload to code scanning | skipped: act has no code scanning API | none: the reports stay in `.rlp/pipeline/reports/` |
-| GitHub OIDC (`id-token: write`) | not available | the AWS deploy (#16) can't run; use `deploy-local` |
+| GitHub OIDC (`id-token: write`) | not available | the AWS terraform and deploy stages can't run; use `deploy-local`, which skips them |
 | `actions/cache` | ephemeral per run | none, only speed |
 | Runner image | `catthehacker/ubuntu:act-latest`, not the real `ubuntu-latest` | tool versions can differ; rlp pins conftest, OPA, gitleaks and Trivy itself, and golden.yml pins Semgrep |
 
