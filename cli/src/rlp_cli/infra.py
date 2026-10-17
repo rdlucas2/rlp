@@ -120,7 +120,11 @@ def module_source(base: str, module: str, stack: Path) -> str:
         return f"{path.rstrip('/')}/{module}{sep}{query}"
     # Terraform only treats ./ and ../ paths as local, so make it relative to the stack.
     target = Path(base).resolve() / module
-    rel = Path(os.path.relpath(target, stack.resolve())).as_posix()
+    try:
+        rel = Path(os.path.relpath(target, stack.resolve())).as_posix()
+    except ValueError:
+        # Windows: no relative path between drives. Terraform fetches an absolute path like a remote source.
+        return target.as_posix()
     return rel if rel.startswith("../") else f"./{rel}"
 
 

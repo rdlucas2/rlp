@@ -101,8 +101,18 @@ def test_local_module_source_is_relative_to_the_stack(tmp_path):
     root = write_repo(tmp_path / "repo", repo_doc([service()]))
     stack = infra.render(root, load(root / "rlp.yaml"), "dev", SETTINGS, ver="v1")
     source = stack.config["module"]["api"]["source"]
-    assert source.startswith("../")
+    # Relative when it can be; on Windows with the checkout and the temp dir on different drives, absolute.
+    assert source.startswith("../") or Path(source).is_absolute()
     assert (stack.dir / source).resolve() == (MODULES / "container-service").resolve()
+
+
+def test_module_source_across_drives_is_absolute(tmp_path, monkeypatch):
+    def no_relpath(*args):
+        raise ValueError("path is on mount 'D:', start on mount 'C:'")
+
+    monkeypatch.setattr(infra.os.path, "relpath", no_relpath)
+    source = infra.module_source(str(MODULES), "container-service", tmp_path)
+    assert source == (MODULES / "container-service").resolve().as_posix()
 
 
 @pytest.mark.parametrize(
