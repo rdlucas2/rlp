@@ -26,6 +26,7 @@ Each schema's `$id` is its raw URL on `main`. Put this first line in a contract 
 - Coverage formats: `cobertura`, `lcov`, `jacoco`, `opencover`. Service kinds: `postgres`, `redis`, `s3`, `sqs`, `sns`.
 - **Verb defaults:** when `verbs.<name>` is absent, the verb runs `task <name>` in the component's `path`. Set it to a command line to override.
 - `quality.coverage.minimum`: a percentage; policy (#10) enforces the platform floor.
+- `quality.cost.monthlyBudget`: USD per month per environment; the pipeline's `cost` stage fails an AWS plan whose Infracost estimate is above it (#39).
 
 Rules that span files or need platform context (for example, that `config.from: service:db` names a declared service, or that `secret: true` entries carry no `default`) belong to the OPA bundle in `policy/`, not here.
 

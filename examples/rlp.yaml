@@ -52,3 +52,6 @@ components:
 quality:
   coverage:
     minimum: 80
+  # Optional: fail an AWS plan whose Infracost estimate is above this (USD per month).
+  cost:
+    monthlyBudget: 50
