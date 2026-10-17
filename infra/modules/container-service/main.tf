@@ -18,7 +18,12 @@ locals {
   short     = substr(local.name, 0, 50)
   tg_name   = "rlp-${substr(md5(local.name), 0, 24)}"
   log_group = "/rlp/${var.environment}/${var.repo}/${var.component}"
-  host      = "${var.component}-${var.repo}.${var.environment}.${data.aws_ssm_parameter.platform["domain"].value}"
+  host      = "${var.component}-${var.repo}.${var.environment}.${local.shared["domain"]}"
+  # The platform's published identifiers (cluster, listener, VPC, subnets, DNS
+  # names). The provider marks every SSM parameter value sensitive, but these
+  # are not secrets: unmarking them keeps plans readable and lets the root
+  # module output the service URL.
+  shared = { for k, p in data.aws_ssm_parameter.platform : k => nonsensitive(p.value) }
   # Listener rule priorities are unique per listener: derive a stable one from the name.
   priority = parseint(substr(md5(local.name), 0, 4), 16) % 49000 + 1000
 
@@ -149,13 +154,13 @@ resource "aws_iam_role" "task" {
 resource "aws_security_group" "service" {
   name        = "${local.name}-service"
   description = "rlp ${local.name}: traffic from the shared load balancer only"
-  vpc_id      = data.aws_ssm_parameter.platform["vpc_id"].value
+  vpc_id      = local.shared["vpc_id"]
 }
 
 resource "aws_vpc_security_group_ingress_rule" "from_load_balancer" {
   security_group_id            = aws_security_group.service.id
   description                  = "The shared load balancer"
-  referenced_security_group_id = data.aws_ssm_parameter.platform["alb_security_group_id"].value
+  referenced_security_group_id = local.shared["alb_security_group_id"]
   ip_protocol                  = "tcp"
   from_port                    = var.port
   to_port                      = var.port
@@ -174,7 +179,7 @@ resource "aws_lb_target_group" "this" {
   port                 = var.port
   protocol             = "HTTP"
   target_type          = "ip"
-  vpc_id               = data.aws_ssm_parameter.platform["vpc_id"].value
+  vpc_id               = local.shared["vpc_id"]
   deregistration_delay = 30
 
   health_check {
@@ -188,7 +193,7 @@ resource "aws_lb_target_group" "this" {
 }
 
 resource "aws_lb_listener_rule" "this" {
-  listener_arn = data.aws_ssm_parameter.platform["listener_arn"].value
+  listener_arn = local.shared["listener_arn"]
   priority     = local.priority
 
   action {
@@ -245,7 +250,7 @@ resource "aws_ecs_task_definition" "this" {
 
 resource "aws_ecs_service" "this" {
   name                              = local.name
-  cluster                           = data.aws_ssm_parameter.platform["cluster_arn"].value
+  cluster                           = local.shared["cluster_arn"]
   task_definition                   = aws_ecs_task_definition.this.arn
   desired_count                     = var.desired_count
   launch_type                       = "FARGATE"
@@ -262,7 +267,7 @@ resource "aws_ecs_service" "this" {
 
   # Default-VPC public subnets with public IPs: no NAT gateway to pay for in S0.
   network_configuration {
-    subnets          = split(",", data.aws_ssm_parameter.platform["subnet_ids"].value)
+    subnets          = split(",", local.shared["subnet_ids"])
     security_groups  = [aws_security_group.service.id]
     assign_public_ip = true
   }
