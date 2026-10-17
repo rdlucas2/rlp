@@ -19,12 +19,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # the secret scan covers the full history
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.13"
       - name: Install tooling
         run: pip install pre-commit go-task-bin
-      - name: Lint (all pre-commit hooks, including gitleaks)
+      # The gitleaks pre-commit hook scans only staged changes, so it finds
+      # nothing in CI. This step scans every commit with the pinned gitleaks.
+      - name: Secret scan (full history)
+        run: |
+          pip install --disable-pip-version-check .
+          rlp secrets scan .
+      - name: Lint (all pre-commit hooks; gitleaks there checks staged changes only)
         run: task lint
       - name: Test
         run: task test
