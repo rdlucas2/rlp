@@ -128,9 +128,52 @@ def test_remote_module_source_keeps_its_ref(tmp_path, base, expected):
 
 def test_default_modules_are_this_versions_tag(tmp_path, monkeypatch):
     monkeypatch.delenv("RLP_MODULES_SOURCE", raising=False)
+    monkeypatch.setattr(infra, "install_origin", dict)  # a release install has no direct_url.json
     root = write_repo(tmp_path / "repo", repo_doc([service()]))
     stack = infra.render(root, load(root / "rlp.yaml"), "dev", infra.Settings.from_env(), ver="v1")
     assert stack.config["module"]["api"]["source"].endswith(f"//infra/modules/container-service?ref=v{infra.__version__}")
+
+
+SHA = "ba8222704aa208d64b63c4d3703aec5a9d519576"
+
+
+@pytest.mark.parametrize(
+    ("origin", "expected"),
+    [
+        (
+            {"url": "https://github.com/rdlucas2/rlp", "vcs_info": {"vcs": "git", "commit_id": SHA, "requested_revision": "main"}},
+            f"git::https://github.com/rdlucas2/rlp.git//infra/modules?ref={SHA}",
+        ),
+        (
+            {"url": "https://github.com/someone/rlp-fork.git", "vcs_info": {"vcs": "git", "commit_id": SHA}},
+            f"git::https://github.com/someone/rlp-fork.git//infra/modules?ref={SHA}",
+        ),
+        (
+            {"url": "ssh://git@github.com/rdlucas2/rlp.git", "vcs_info": {"vcs": "git", "commit_id": SHA}},
+            f"{infra.MODULES_REPO}?ref={SHA}",
+        ),
+        ({}, f"{infra.MODULES_REPO}?ref=v{infra.__version__}"),
+        ({"url": "https://example.com/rlp.zip", "archive_info": {}}, f"{infra.MODULES_REPO}?ref=v{infra.__version__}"),
+    ],
+)
+def test_default_modules_follow_the_install_source(monkeypatch, origin, expected):
+    monkeypatch.setattr(infra, "install_origin", lambda: origin)
+    assert infra.default_modules() == expected
+
+
+def test_default_modules_from_a_checkout_are_its_own(monkeypatch):
+    monkeypatch.setattr(infra, "install_origin", lambda: {"url": REPO.as_uri(), "dir_info": {"editable": True}})
+    assert Path(infra.default_modules()) == MODULES
+
+
+def test_default_modules_from_a_directory_without_modules_use_the_tag(tmp_path, monkeypatch):
+    monkeypatch.setattr(infra, "install_origin", lambda: {"url": tmp_path.as_uri(), "dir_info": {}})
+    assert infra.default_modules() == f"{infra.MODULES_REPO}?ref=v{infra.__version__}"
+
+
+def test_install_origin_reads_this_installs_direct_url():
+    # Whatever this environment installed, the answer is a dict and never raises.
+    assert isinstance(infra.install_origin(), dict)
 
 
 def test_config_without_default_and_empty_defaults(tmp_path):

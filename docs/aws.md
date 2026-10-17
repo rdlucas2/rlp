@@ -141,7 +141,7 @@ rlp pipeline run -s terraform --deploy-env dev  # plan and policy-check it with 
 rlp infra destroy --env dev                    # tear the app stack down
 ```
 
-`--modules <dir>` (or `RLP_MODULES_SOURCE`) uses modules from a checkout instead of the ones tagged with your rlp version.
+By default the modules come from the same rlp as your CLI: a release install uses its version's tag, an install from a git commit (`pip install "rlp-cli @ git+https://github.com/rdlucas2/rlp@<ref>"`) uses that commit, and an install from a checkout uses the checkout's `infra/modules`. `--modules <dir or go-getter URL>` (or `RLP_MODULES_SOURCE`) overrides it.
 
 ## Not yet
 

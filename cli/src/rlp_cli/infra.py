@@ -19,6 +19,7 @@ an empty secret for the connection string, and an operator fills it.
 from __future__ import annotations
 
 import http.client
+import importlib.metadata
 import json
 import os
 import re
@@ -28,6 +29,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from rlp_cli import __version__, artifacts
 
@@ -128,6 +130,42 @@ def module_source(base: str, module: str, stack: Path) -> str:
     return rel if rel.startswith("../") else f"./{rel}"
 
 
+def install_origin() -> dict:
+    """Where pip installed this CLI from: its PEP 610 direct_url.json, or {} for a release or a frozen binary."""
+    try:
+        text = importlib.metadata.distribution("rlp-cli").read_text("direct_url.json")
+    except importlib.metadata.PackageNotFoundError:
+        return {}
+    try:
+        origin = json.loads(text) if text else {}
+    except ValueError:
+        return {}
+    return origin if isinstance(origin, dict) else {}
+
+
+def default_modules() -> str:
+    """Modules from the same rlp as this CLI.
+
+    A CLI installed from a git commit uses that commit's modules, and one
+    installed from a checkout uses the checkout's. Only a release install
+    uses the modules tagged with its version: a git or checkout install still
+    reports the last release's version, whose tag may predate the modules.
+    """
+    origin = install_origin()
+    url = origin.get("url") or ""
+    vcs = origin.get("vcs_info") or {}
+    if vcs.get("vcs") == "git" and vcs.get("commit_id"):
+        commit = vcs["commit_id"]
+        if url.startswith("https://"):
+            return f"git::{url.removesuffix('/').removesuffix('.git')}.git//infra/modules?ref={commit}"
+        return f"{MODULES_REPO}?ref={commit}"
+    if "dir_info" in origin and url.startswith("file:"):
+        modules = Path(url2pathname(urlsplit(url).path)) / "infra" / "modules"
+        if modules.is_dir():
+            return str(modules)
+    return f"{MODULES_REPO}?ref=v{__version__}"
+
+
 def health_path(c: dict) -> str:
     health = (c.get("runtime") or {}).get("health") or {}
     return health.get("readiness") or health.get("liveness") or "/"
@@ -177,7 +215,7 @@ def render(root: Path, doc: dict, env: str, settings: Settings, only: tuple[str,
     if not chosen:
         return stack
     ver = ver or artifacts.version(root)
-    base = settings.modules or f"{MODULES_REPO}?ref=v{__version__}"
+    base = settings.modules or default_modules()
     meta = doc["metadata"]
 
     terraform: dict = {
