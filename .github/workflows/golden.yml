@@ -49,12 +49,6 @@ on:
         description: Terraform state bucket (bootstrap output state_bucket)
         type: string
         default: ""
-    secrets:
-      infracost-api-key:
-        description: >-
-          Infracost API key for the cost stage. Without it the stage is skipped,
-          unless rlp.yaml declares quality.cost.monthlyBudget.
-        required: false
       components:
         description: Comma-separated component names; empty means every component
         type: string
@@ -71,6 +65,12 @@ on:
         description: Publish artifacts on pushes to the default branch and on tags
         type: boolean
         default: true
+    secrets:
+      infracost-api-key:
+        description: >-
+          Infracost API key for the cost stage. Without it the stage is skipped,
+          unless rlp.yaml declares quality.cost.monthlyBudget.
+        required: false
 
 # No workflow-level permissions: a called workflow may not ask for more than
 # its caller grants, even for a job that ends up skipped. The gates job reads the
