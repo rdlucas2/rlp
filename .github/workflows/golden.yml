@@ -94,6 +94,7 @@ jobs:
       # commit, or the commit before a push. Empty means the whole repo is new.
       RLP_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before }}
       SEMGREP_VERSION: "1.179.0"  # keep in step with SEMGREP_VERSION in cli/src/rlp_cli/tools.py
+      UV_VERSION: "0.11.32"  # templates run their verbs with uv (python-fastapi); keep in step with release.yml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -108,7 +109,7 @@ jobs:
             path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
             *) spec="rlp-cli==${RLP_SPEC}" ;;
           esac
-          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin "semgrep==$SEMGREP_VERSION"
+          python -m pip install --disable-pip-version-check "$spec" pre-commit go-task-bin "uv==$UV_VERSION" "semgrep==$SEMGREP_VERSION"
           rlp --version
       - name: precommit
         run: rlp pipeline run --reset --stage precommit --component "$RLP_COMPONENTS"
@@ -167,6 +168,7 @@ jobs:
     env:
       RLP_SPEC: ${{ inputs.rlp-version }}
       RLP_COMPONENTS: ${{ inputs.components }}
+      UV_VERSION: "0.11.32"  # keep in step with the gates job
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -179,7 +181,7 @@ jobs:
             path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
             *) spec="rlp-cli==${RLP_SPEC}" ;;
           esac
-          python -m pip install --disable-pip-version-check "$spec" go-task-bin
+          python -m pip install --disable-pip-version-check "$spec" go-task-bin "uv==$UV_VERSION"
       - name: Package
         run: rlp pipeline run --reset --stage setup --stage package --component "$RLP_COMPONENTS"
       - name: Log in to GHCR
