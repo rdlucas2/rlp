@@ -1,6 +1,6 @@
 output "url" {
   description = "Base URL of the shared load balancer. Send the host output as the Host header."
-  value       = "http://${data.aws_ssm_parameter.platform["alb_dns_name"].value}"
+  value       = "http://${local.shared["alb_dns_name"]}"
 }
 
 output "host" {
