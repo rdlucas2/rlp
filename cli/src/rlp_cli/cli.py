@@ -535,7 +535,7 @@ def infra_options(func):
         click.option("--registry", help="Image registry prefix, e.g. ghcr.io/owner/repo. Default: $RLP_REGISTRY."),
         click.option("--state-bucket", help="Terraform state bucket. Default: $RLP_TF_STATE_BUCKET; without one, state stays local."),
         click.option("--region", help="AWS region. Default: $AWS_REGION, else us-east-1."),
-        click.option("--modules", help="Module source: a directory holding the modules, or a go-getter URL. Default: $RLP_MODULES_SOURCE, else this rlp version's tag."),
+        click.option("--modules", help="Module source: a directory holding the modules, or a go-getter URL. Default: $RLP_MODULES_SOURCE, else the modules from wherever this rlp was installed from (its git commit, its checkout, or its release tag)."),
     ]):
         func = option(func)
     return func
