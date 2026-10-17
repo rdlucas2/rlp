@@ -15,7 +15,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, artifacts, contract, coverage, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, artifacts, contract, coverage, infra, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -475,18 +475,24 @@ def pipeline_stages(ctx: click.Context) -> None:
 @click.option("--stage", "-s", "stages", multiple=True, type=click.Choice(pipeline.STAGE_NAMES), help="Run only this stage. Repeatable. Default: every stage.")
 @click.option("--component", "-c", "components", multiple=True, help="Only these components (repeatable, or comma-separated).")
 @click.option("--deploy-env", default="", help="Target environment for the deploy stage.")
-@click.option("--deploy-local", is_flag=True, help="Deploy to LocalStack instead of AWS (for act and laptops).")
+@click.option("--deploy-local", is_flag=True, help="Target LocalStack instead of AWS (for act); the AWS terraform and deploy stages then skip.")
+@click.option("--deploy-timeout", default=300.0, show_default=True, help="Seconds the deploy stage waits for readiness through the load balancer.")
 @click.option("--reset", is_flag=True, help="Discard earlier results in .rlp/pipeline/results.json first.")
 @output_option
 @click.pass_context
-def pipeline_run(ctx: click.Context, root: Path, stages: tuple[str, ...], components: tuple[str, ...], deploy_env: str, deploy_local: bool, reset: bool) -> None:
-    """Run the gates in order and stop at the first failure."""
+def pipeline_run(ctx: click.Context, root: Path, stages: tuple[str, ...], components: tuple[str, ...], deploy_env: str, deploy_local: bool, deploy_timeout: float, reset: bool) -> None:
+    """Run the gates in order and stop at the first failure.
+
+    The terraform and deploy stages read RLP_REGISTRY, RLP_TF_STATE_BUCKET,
+    AWS_REGION and RLP_MODULES_SOURCE from the environment (see docs/aws.md).
+    """
     json_mode = ctx.obj["output"] == "json"
     run_ctx = pipeline.Context(
         root=root,
         components=split_components(components),
         deploy_env=deploy_env,
         deploy_local=deploy_local,
+        smoke_timeout=deploy_timeout,
         stream=sys.stderr if json_mode else None,
     )
     results = pipeline.run(run_ctx, list(stages) or pipeline.STAGE_NAMES, reset=reset)
@@ -511,6 +517,82 @@ def pipeline_summary(ctx: click.Context, root: Path) -> None:
         emit_json({"ok": not failed, "stages": list(results.values())})
         return
     click.echo(pipeline.summary(results), nl=False)
+
+
+# --- infra ---
+
+
+@cli.group(name="infra")
+def infra_group() -> None:
+    """Render and tear down the AWS Terraform stack generated from rlp.yaml."""
+
+
+def infra_options(func):
+    for option in reversed([
+        click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory)."),
+        click.option("--env", "env", required=True, help="Environment, for example dev."),
+        click.option("--component", "-c", "components", multiple=True, help="Only these components (repeatable, or comma-separated)."),
+        click.option("--registry", help="Image registry prefix, e.g. ghcr.io/owner/repo. Default: $RLP_REGISTRY."),
+        click.option("--state-bucket", help="Terraform state bucket. Default: $RLP_TF_STATE_BUCKET; without one, state stays local."),
+        click.option("--region", help="AWS region. Default: $AWS_REGION, else us-east-1."),
+        click.option("--modules", help="Module source: a directory holding the modules, or a go-getter URL. Default: $RLP_MODULES_SOURCE, else this rlp version's tag."),
+    ]):
+        func = option(func)
+    return func
+
+
+def render_stack(ctx: click.Context, root: Path, env: str, components: tuple[str, ...], **given: str | None) -> infra.Stack:
+    try:
+        stack = infra.render(root, contract.load_repo(root), env, infra.Settings.from_env(**given), split_components(components))
+    except (contract.ContractError, infra.InfraError) as err:
+        fail(ctx, str(err))
+    return stack
+
+
+@infra_group.command(name="render")
+@infra_options
+@output_option
+@click.pass_context
+def infra_render(ctx: click.Context, root: Path, env: str, components: tuple[str, ...], **given: str | None) -> None:
+    """Write .rlp/infra/ENV/main.tf.json for the components that deploy to AWS."""
+    stack = render_stack(ctx, root, env, components, **given)
+    path = (stack.dir / infra.STACK_FILE).relative_to(root).as_posix()
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "env": env, "file": path if stack.components else None, "components": stack.components, "skipped": stack.skipped, "backend": stack.backend})
+        return
+    for name, why in stack.skipped.items():
+        click.echo(f"skipped {name}: {why}", err=True)
+    if not stack.components:
+        click.echo("nothing deploys to AWS; no stack written")
+        return
+    if not stack.backend:
+        click.echo("warning: no state bucket given; terraform keeps state in the stack directory", err=True)
+    click.echo(f"wrote {path} ({', '.join(stack.components)})")
+
+
+@infra_group.command(name="destroy")
+@infra_options
+@click.option("--auto-approve", is_flag=True, help="Destroy without asking terraform's confirmation.")
+@output_option
+@click.pass_context
+def infra_destroy(ctx: click.Context, root: Path, env: str, components: tuple[str, ...], auto_approve: bool, **given: str | None) -> None:
+    """Destroy the environment's stack: render it, init against its state, terraform destroy."""
+    json_mode = ctx.obj["output"] == "json"
+    if json_mode and not auto_approve:
+        fail(ctx, "--output json needs --auto-approve: there is no terminal to confirm on")
+    stack = render_stack(ctx, root, env, components, **given)
+    if not stack.components:
+        fail(ctx, "nothing in rlp.yaml deploys to AWS, so there is no stack to destroy")
+    stream = sys.stderr if json_mode else None
+    try:
+        infra.init(stack, stream=stream)
+        infra.destroy(stack, auto_approve, stream=stream)
+    except infra.InfraError as err:
+        fail(ctx, str(err), code=1)
+    if json_mode:
+        emit_json({"ok": True, "env": env, "destroyed": stack.components})
+    else:
+        click.echo(f"destroyed {env}: {', '.join(stack.components)}")
 
 
 # --- templates ---

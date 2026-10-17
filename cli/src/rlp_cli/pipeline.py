@@ -18,7 +18,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from rlp_cli import baseline, contract, coverage, policy, sast, secrets, sonar, trivy, verbs, vex
+from rlp_cli import baseline, contract, coverage, infra, policy, sast, secrets, sonar, trivy, verbs, vex
 
 # (stage, what it gates). Order is the pipeline order.
 STAGES = [
@@ -33,8 +33,8 @@ STAGES = [
     ("sonar", "optional local SonarQube analysis; skipped without SONAR_TOKEN"),
     ("package", "the package verb, per component"),
     ("trivy", "Trivy scan of dependencies and built images"),
-    ("terraform", "Terraform plan checked by OPA (#16)"),
-    ("deploy", "deploy to the target environment (#16)"),
+    ("terraform", "Terraform plan for deploy-env, checked by the policy bundle"),
+    ("deploy", "apply the saved plan, then check readiness through the load balancer"),
 ]
 STAGE_NAMES = [name for name, _ in STAGES]
 RESULTS = Path(".rlp") / "pipeline" / "results.json"
@@ -58,6 +58,7 @@ class Context:
     components: tuple[str, ...] = ()
     deploy_env: str = ""
     deploy_local: bool = False
+    smoke_timeout: float = 300.0  # seconds the deploy stage waits for readiness through the load balancer
     stream: object = None  # where verbs' output goes; None inherits stdout
 
     def doc(self) -> dict:
@@ -176,15 +177,59 @@ def stage_trivy(ctx: Context) -> StageResult:
     return StageResult("trivy", "passed", f"no fixable HIGH or CRITICAL vulnerabilities in {targets}{note}", data=report)
 
 
+LOCAL_DEPLOY = "the AWS deploy has no LocalStack target (LocalStack's free edition has no ECS); use `rlp run` locally"
+
+
+def deploy_skip(ctx: Context, stage: str) -> StageResult | None:
+    """Why the terraform and deploy stages have nothing to do, or None when they do."""
+    if ctx.deploy_local:
+        return StageResult(stage, "skipped", LOCAL_DEPLOY)
+    if not ctx.deploy_env:
+        return StageResult(stage, "skipped", "no deploy-env given")
+    chosen, skipped = infra.deployable(ctx.doc(), ctx.components)
+    if not chosen:
+        why = "; ".join(f"{k}: {v}" for k, v in skipped.items()) or "no components"
+        return StageResult(stage, "skipped", f"nothing deploys to AWS ({why})")
+    return None
+
+
 def stage_terraform(ctx: Context) -> StageResult:
-    return StageResult("terraform", "skipped", "no Terraform rendered for this repo yet (#16)")
+    skip = deploy_skip(ctx, "terraform")
+    if skip:
+        return skip
+    settings = infra.Settings.from_env()
+    missing = [name for name, value in (("RLP_TF_STATE_BUCKET", settings.state_bucket), ("RLP_REGISTRY", settings.registry)) if not value]
+    if missing:
+        return StageResult("terraform", "failed", f"{' and '.join(missing)} must be set to plan a deploy (see docs/aws.md)")
+    stack = infra.render(ctx.root, ctx.doc(), ctx.deploy_env, settings, ctx.components)
+    infra.init(stack, stream=ctx.stream)
+    plan_doc = infra.plan(stack, stream=ctx.stream)
+    counts = infra.changes(plan_doc)
+    shown = ", ".join(f"{n} to {action}" for action, n in counts.items() if n) or "no changes"
+    per = {c: "passed" for c in stack.components} | {c: "skipped" for c in stack.skipped}
+    data = {"env": ctx.deploy_env, "changes": counts, "plan": stack.plan_json.relative_to(ctx.root).as_posix()}
+    violations = policy.check(stack.plan_json.parent, ("rlp.terraform",))
+    if violations:
+        data["violations"] = [v.as_dict() for v in violations]
+        rules = ", ".join(sorted({v.rule for v in violations}))
+        return StageResult("terraform", "failed", f"plan for {ctx.deploy_env} ({shown}) breaks policy: {rules}", components={c: "failed" for c in stack.components}, data=data)
+    return StageResult("terraform", "passed", f"plan for {ctx.deploy_env}: {shown}; policy passed", components=per, data=data)
 
 
 def stage_deploy(ctx: Context) -> StageResult:
-    if not ctx.deploy_env and not ctx.deploy_local:
-        return StageResult("deploy", "skipped", "no deploy-env given")
-    target = "LocalStack" if ctx.deploy_local else ctx.deploy_env
-    return StageResult("deploy", "skipped", f"deploy to {target} is not implemented yet (#16)")
+    skip = deploy_skip(ctx, "deploy")
+    if skip:
+        return skip
+    stack = infra.Stack(env=ctx.deploy_env, dir=infra.stack_dir(ctx.root, ctx.deploy_env))
+    infra.apply(stack, stream=ctx.stream)
+    outs = infra.outputs(stack)
+    checks = infra.smoke(outs, timeout=ctx.smoke_timeout)
+    per = {c.component: "passed" if c.ok else "failed" for c in checks}
+    data = {"env": ctx.deploy_env, "checks": [c.as_dict() for c in checks]}
+    if not all(c.ok for c in checks):
+        failed = "; ".join(c.text() for c in checks if not c.ok)
+        return StageResult("deploy", "failed", f"applied to {ctx.deploy_env}, but readiness failed: {failed}", components=per, data=data)
+    return StageResult("deploy", "passed", f"applied to {ctx.deploy_env}; " + "; ".join(c.text() for c in checks), components=per, data=data)
 
 
 RUNNERS = {
@@ -232,7 +277,7 @@ def run(ctx: Context, stages: list[str], reset: bool = False) -> list[StageResul
         start = time.monotonic()
         try:
             result = RUNNERS[name](ctx)
-        except (contract.ContractError, verbs.VerbError, policy.PolicyError, secrets.ScanError, coverage.CoverageError, sonar.SonarError, trivy.ScanError, vex.VexError, sast.SastError, baseline.BaselineError) as err:
+        except (contract.ContractError, verbs.VerbError, policy.PolicyError, secrets.ScanError, coverage.CoverageError, sonar.SonarError, trivy.ScanError, vex.VexError, sast.SastError, baseline.BaselineError, infra.InfraError) as err:
             result = StageResult(name, "failed", str(err))
         result.seconds = round(time.monotonic() - start, 3)
         ran.append(result)
