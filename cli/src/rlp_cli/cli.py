@@ -15,7 +15,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, artifacts, contract, coverage, infra, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, artifacts, certify, contract, coverage, infra, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -631,6 +631,70 @@ def update(ctx: click.Context, path: Path, data: tuple[str, ...], defaults: bool
     except scaffold.ScaffoldError as err:
         fail(ctx, str(err), code=1)
     report_render(ctx, path, "update")
+
+
+@cli.group(name="template")
+def template_group() -> None:
+    """Work on rlp templates: certify that one renders a repo passing every gate."""
+
+
+@template_group.command(name="certify")
+@click.argument("path", type=click.Path(path_type=Path, file_okay=False), default=".")
+@click.option("--dest", type=click.Path(path_type=Path, file_okay=False), help="Render into this empty directory (default: a new temporary directory).")
+@click.option("--keep", is_flag=True, help="Keep the rendered repo afterwards (always kept with --dest).")
+@click.option("--vcs-ref", default="HEAD", show_default=True, help="Template git ref to render; HEAD includes uncommitted changes.")
+@click.option("--trust", is_flag=True, help="Allow the template's tasks and extensions to run.")
+@click.option("--skip", "skip", multiple=True, metavar="GATE", help=f"Skip a gate (repeatable, or comma-separated); the template is then not certified. Gates: {', '.join(certify.GATES)}.")
+@click.option("--smoke-timeout", default=180.0, show_default=True, help="Seconds to wait for the running repo to pass smoke.")
+@click.option("--report", "report_path", type=click.Path(path_type=Path, dir_okay=False), help="Also write the conformance report as JSON to this file.")
+@output_option
+@click.pass_context
+def template_certify(ctx: click.Context, path: Path, dest: Path | None, keep: bool, vcs_ref: str, trust: bool, skip: tuple[str, ...], smoke_timeout: float, report_path: Path | None) -> None:
+    """Certify the template at PATH: render it with conformance.answers, run every gate on the result.
+
+    The gates are the golden pipeline's (deploy excluded), any other verb in
+    conformance.verbs, then `rlp run`, `rlp smoke` and `rlp down`. Exits 0 only
+    when the template is certified.
+    """
+    json_mode = ctx.obj["output"] == "json"
+    opts = certify.Options(
+        template=path,
+        dest=dest,
+        vcs_ref=vcs_ref or None,
+        trust=trust,
+        skip=split_components(skip),
+        smoke_timeout=smoke_timeout,
+        stream=sys.stderr if json_mode else None,
+    )
+    try:
+        report = certify.certify(opts)
+    except (certify.CertifyError, contract.ContractError) as err:
+        fail(ctx, str(err))
+    certify.cleanup(report, keep=keep or dest is not None)
+    doc = report.as_dict()
+    if report_path:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    if json_mode:
+        emit_json({"ok": report.certified, **doc})
+    else:
+        for g in report.gates:
+            click.echo(f"{g.gate:10} {g.status:8} {g.detail}")
+        verdict = "certified" if report.certified else "not certified"
+        click.echo(f"{report.template} {report.version or ''}: {verdict}".replace("  ", " "))
+    ctx.exit(0 if report.certified else 1)
+
+
+@template_group.command(name="summary")
+@click.argument("report_path", type=click.Path(path_type=Path, dir_okay=False, exists=True))
+@click.pass_context
+def template_summary(ctx: click.Context, report_path: Path) -> None:
+    """Print a conformance report (from certify --report) as Markdown, for $GITHUB_STEP_SUMMARY."""
+    try:
+        doc = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        fail(ctx, f"cannot read {report_path}: {err}")
+    click.echo(certify.summary(doc), nl=False)
 
 
 def report_render(ctx: click.Context, dest: Path, action: str) -> None:
