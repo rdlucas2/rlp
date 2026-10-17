@@ -49,6 +49,17 @@ locals {
   # App stacks keep state under rlp/apps/; the platform stacks under rlp/platform/.
   app_state = "${aws_s3_bucket.state.arn}/rlp/apps/*"
   rlp_roles = "arn:${local.partition}:iam::${local.account}:role/rlp/*"
+
+  # The prefix of the OIDC token's sub claim for each repo, in both formats
+  # GitHub issues: repo:<owner>/<name> and, with immutable IDs,
+  # repo:<owner>@<owner id>/<name>@<repo id>. Owner and repo names can't
+  # contain "@", "/" or ":", so the wildcards only match the numeric IDs.
+  github_subjects = flatten([
+    for repo in var.github_repositories : [
+      "repo:${repo}",
+      "repo:${split("/", repo)[0]}@*/${split("/", repo)[1]}@*",
+    ]
+  ])
 }
 
 # --- state bucket ---
@@ -143,7 +154,7 @@ data "aws_iam_policy_document" "plan_trust" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [for repo in var.github_repositories : "repo:${repo}:*"]
+      values   = [for subject in local.github_subjects : "${subject}:*"]
     }
   }
 }
@@ -164,9 +175,9 @@ data "aws_iam_policy_document" "deploy_trust" {
     }
 
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [for repo in var.github_repositories : "repo:${repo}:ref:refs/heads/${var.deploy_branch}"]
+      values   = [for subject in local.github_subjects : "${subject}:ref:refs/heads/${var.deploy_branch}"]
     }
   }
 }
