@@ -62,11 +62,13 @@ tasks:
       - '{{.VENV_PYTHON}} cli/build_binary.py'
 
   run:
-    desc: Start locally against local backing services
+    desc: Start the platform and its backing services locally with rlp run (Docker Compose)
+    deps: [test-deps]
     cmds:
-      - 'echo "Nothing to run yet; the platform stub arrives in #18"'
+      - '{{.VENV_PYTHON}} -m rlp_cli run'
 
   smoke:
-    desc: Check health endpoints of a running instance
+    desc: Check the health endpoints of the running platform with rlp smoke
+    deps: [test-deps]
     cmds:
-      - 'echo "Nothing to smoke-test yet"'
+      - '{{.VENV_PYTHON}} -m rlp_cli smoke'

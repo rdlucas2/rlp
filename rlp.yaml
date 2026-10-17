@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rdlucas2/rlp/main/schemas/v1alpha1/repo.schema.json
+# rlp is project #1: the repo runs under its own contract and golden pipeline (#18).
+#
+# The platform component was rendered from the python-fastapi template into
+# platform/ (see platform/.copier-answers.yml). platform/rlp.yaml is the
+# template's own copy of this component, kept so `rlp update platform` works;
+# this file is the contract the pipeline and `rlp run` read for the repo.
+#
+# The CLI (cli/) is not a component yet: its outputs are a wheel and per-OS
+# binaries, and v1alpha1 has no artifact kind or runtime for either. Until it
+# does, the CLI keeps its own workflows (ci.yml, cli.yml, release.yml).
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: rlp
+  project: rlp
+  description: rlp, the agent-native internal developer platform, gated by its own pipeline.
+  owners:
+    - rdlucas2
+components:
+  - name: platform
+    path: platform
+    language: python
+    artifact:
+      kind: container-image
+      dockerfile: Dockerfile
+    runtime:
+      kind: container-service
+      port: 8000
+      health:
+        liveness: /healthz
+        readiness: /readyz
+    # Every verb runs `task <name>` in platform/ unless overridden here.
+    verbs: {}
+    reports:
+      junit: reports/junit.xml
+      coverage:
+        format: cobertura
+        path: reports/coverage.xml
+    config:
+      - name: PORT
+        description: Port the service listens on.
+        default: "8000"
+      - name: LOG_LEVEL
+        description: Log level for the JSON logger (debug, info, warning, error, critical).
+        default: info
+      - name: DATABASE_URL
+        description: Connection string for the platform's Postgres state store; /readyz checks it is reachable when set.
+        from: service:db
+    services:
+      - name: db
+        kind: postgres
+        version: "17"
+    telemetry:
+      enabled: true
+      serviceName: rlp-platform
+quality:
+  coverage:
+    minimum: 80
