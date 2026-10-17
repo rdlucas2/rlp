@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -298,9 +299,22 @@ def gate_down(dest: Path, project: str, stream) -> Gate:
     return Gate("down", "passed", f"stopped {project}")
 
 
+def _clear_readonly(func, path, _exc) -> None:
+    """rmtree hook: git writes its objects read-only, and Windows won't delete read-only files."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except OSError:
+        pass  # best effort: a leftover temp dir is not worth failing over
+
+
 def cleanup(report: Report, keep: bool) -> None:
-    if not keep and report.rendered:
-        shutil.rmtree(report.rendered, ignore_errors=True)
+    if keep or not report.rendered or not Path(report.rendered).exists():
+        return
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(report.rendered, onexc=_clear_readonly)
+    else:  # pragma: no cover - Python 3.11
+        shutil.rmtree(report.rendered, onerror=_clear_readonly)
 
 
 def summary(report: dict) -> str:
