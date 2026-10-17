@@ -10,6 +10,7 @@ GITLEAKS_VERSION=8.30.1
 ACT_VERSION=0.2.89
 TASK_VERSION=3.54.0
 SEMGREP_VERSION=1.179.0
+INFRACOST_VERSION=0.10.46
 
 BIN=/usr/local/bin
 GH=https://github.com
@@ -17,10 +18,10 @@ GH=https://github.com
 case "$(uname -m)" in
   x86_64|amd64)
     opa_arch=amd64; conftest_arch=x86_64; trivy_arch=64bit
-    gitleaks_arch=x64; act_arch=x86_64; task_arch=amd64 ;;
+    gitleaks_arch=x64; act_arch=x86_64; task_arch=amd64; infracost_arch=amd64 ;;
   aarch64|arm64)
     opa_arch=arm64; conftest_arch=arm64; trivy_arch=ARM64
-    gitleaks_arch=arm64; act_arch=arm64; task_arch=arm64 ;;
+    gitleaks_arch=arm64; act_arch=arm64; task_arch=arm64; infracost_arch=arm64 ;;
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
@@ -41,6 +42,8 @@ untar "$GH/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_
 untar "$GH/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${gitleaks_arch}.tar.gz" gitleaks
 untar "$GH/nektos/act/releases/download/v${ACT_VERSION}/act_Linux_${act_arch}.tar.gz" act
 untar "$GH/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${task_arch}.tar.gz" task
+untar "$GH/infracost/infracost/releases/download/v${INFRACOST_VERSION}/infracost-linux-${infracost_arch}.tar.gz" "infracost-linux-${infracost_arch}"
+sudo mv "$BIN/infracost-linux-${infracost_arch}" "$BIN/infracost"
 
 # Python tooling via uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -49,6 +52,6 @@ uv tool install pre-commit
 uv tool install copier
 uv tool install "semgrep==${SEMGREP_VERSION}"
 
-for tool in opa conftest trivy gitleaks act task uv pre-commit copier semgrep terraform gh docker; do
+for tool in opa conftest trivy gitleaks infracost act task uv pre-commit copier semgrep terraform gh docker; do
   printf '%-11s' "$tool"; command -v "$tool" >/dev/null && echo ok || { echo MISSING; exit 1; }
 done

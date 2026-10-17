@@ -1,4 +1,4 @@
-"""Pinned OPA, conftest, gitleaks and Trivy binaries, and the Semgrep rules.
+"""Pinned OPA, conftest, gitleaks, Trivy and Infracost binaries, and the Semgrep rules.
 
 `rlp policy check` runs the policy bundle through conftest, the pipeline's
 secret scan runs gitleaks and its vulnerability scan runs Trivy. Rather than
@@ -7,7 +7,8 @@ per-user cache and checks each against the SHA256 published with its release.
 Versions match .devcontainer/install-tools.sh.
 
 Trivy is large and only the trivy stage needs it, so it installs separately
-(ensure_trivy), not with the policy tools. Semgrep is a Python package, so it
+(ensure_trivy), not with the policy tools. Infracost likewise installs only
+for the cost stage (ensure_infracost). Semgrep is a Python package, so it
 is installed with pip at SEMGREP_VERSION (golden.yml does this); rlp fetches
 only its rules, at a pinned commit.
 """
@@ -32,6 +33,7 @@ CONFTEST_VERSION = "0.71.1"
 GITLEAKS_VERSION = "8.30.1"
 TRIVY_VERSION = "0.76.0"
 SEMGREP_VERSION = "1.179.0"
+INFRACOST_VERSION = "0.10.46"
 # semgrep/semgrep-rules has no releases; pin a commit. Fetched with git, so the
 # commit hash is the integrity check.
 SEMGREP_RULES_REPO = "https://github.com/semgrep/semgrep-rules"
@@ -67,6 +69,16 @@ TRIVY = {
     ("darwin", "arm64"): ("macOS-ARM64.tar.gz", "e7ec0d21fe842553f59af99aba2efbcc822369fbaed27019c575408b6d135fce"),
     ("windows", "x86_64"): ("windows-64bit.zip", "7b4762a5a5326cb4b83dfd2bb5d9aaf15a1ed867c75cad7dd8b38840a28e7be6"),
 }
+# Infracost archives hold one binary, named per platform: (asset suffix, sha256, member).
+INFRACOST = {
+    ("linux", "x86_64"): ("linux-amd64", "d0d081cd39b07b2ca5c315830bfc4bcdfb0183b04c19cb18835c154482a2c97b", "infracost-linux-amd64"),
+    ("linux", "arm64"): ("linux-arm64", "acd693c7d001fef44787bc5de65fffcb25bf5445885fd1da98a7b31281e32b43", "infracost-linux-arm64"),
+    ("darwin", "x86_64"): ("darwin-amd64", "16f9d48469fcbc5e8133f10dca54cd34f15487f1da331c1be579cc8d80d9c3dc", "infracost-darwin-amd64"),
+    ("darwin", "arm64"): ("darwin-arm64", "09fa73ecdc762c1b557df70234eb44cc446a9a9e412a4ab326185cac3f39e631", "infracost-darwin-arm64"),
+    ("windows", "x86_64"): ("windows-amd64", "a915a576167d0138089ec2e9d0ff2a783a114580808cff2b573e42e1088e7929", "infracost.exe"),
+}
+
+
 class ToolError(RuntimeError):
     """A pinned tool could not be installed."""
 
@@ -177,6 +189,26 @@ def ensure_trivy(dest: Path | None = None) -> Path:
     archive = _fetch(f"{GITHUB}/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/{asset}", sha)
     _write_executable(path, _extract(archive, asset, f"trivy{exe}"))
     stamp.write_text(TRIVY_VERSION, encoding="utf-8")
+    return path
+
+
+def ensure_infracost(dest: Path | None = None) -> Path:
+    """Install the pinned Infracost into dest (default: the user cache) and return its path."""
+    override = os.environ.get("RLP_TOOLS_DIR")
+    dest = dest or (Path(override) if override else _cache_base() / f"infracost-{INFRACOST_VERSION}")
+    key = current_platform()
+    if key not in INFRACOST:
+        raise ToolError(f"no pinned Infracost build for {key[0]} {key[1]}")
+    path = dest / f"infracost{exe_suffix()}"
+    stamp = dest / ".infracost-version"
+    if stamp.exists() and stamp.read_text(encoding="utf-8") == INFRACOST_VERSION and path.exists():
+        return path
+    dest.mkdir(parents=True, exist_ok=True)
+    suffix, sha, member = INFRACOST[key]
+    asset = f"infracost-{suffix}.tar.gz"
+    archive = _fetch(f"{GITHUB}/infracost/infracost/releases/download/v{INFRACOST_VERSION}/{asset}", sha)
+    _write_executable(path, _extract(archive, asset, member))
+    stamp.write_text(INFRACOST_VERSION, encoding="utf-8")
     return path
 
 
