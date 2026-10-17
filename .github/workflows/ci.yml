@@ -28,3 +28,41 @@ jobs:
         run: task lint
       - name: Test
         run: task test
+
+  # The Terraform in infra/ and a stack rendered from the example rlp.yaml are
+  # well-formed: terraform fmt and validate. Nothing here talks to AWS.
+  infra:
+    runs-on: ubuntu-latest
+    env:
+      TERRAFORM_VERSION: "1.12.2"  # keep in step with golden.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install Terraform
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}"
+          zip="terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          curl -sSfLO "$base/$zip"
+          curl -sSfLO "$base/terraform_${TERRAFORM_VERSION}_SHA256SUMS"
+          grep " ${zip}\$" "terraform_${TERRAFORM_VERSION}_SHA256SUMS" | sha256sum --check --strict
+          unzip -q -o "$zip" terraform -d "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Format
+        run: terraform fmt -check -recursive -diff infra
+      - name: Validate the modules
+        run: |
+          for dir in infra/bootstrap infra/platform infra/modules/container-service; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -backend=false -input=false -no-color
+            terraform -chdir="$dir" validate -no-color
+            echo "::endgroup::"
+          done
+      - name: Validate a rendered stack
+        run: |
+          pip install --disable-pip-version-check .
+          rlp infra render --path examples --env dev --registry ghcr.io/rdlucas2/rlp --modules infra/modules
+          terraform -chdir=examples/.rlp/infra/dev init -backend=false -input=false -no-color
+          terraform -chdir=examples/.rlp/infra/dev validate -no-color

@@ -9,6 +9,7 @@
 #         contents: write          # publish: attach zips and jars to releases
 #         packages: write          # publish: push images to GHCR
 #         security-events: write   # gates: upload SARIF to code scanning
+#         id-token: write          # deploy: GitHub OIDC for AWS (only with deploy-env)
 #
 # Every step is a thin wrapper around an `rlp` command; the gate logic lives in
 # the CLI (`rlp pipeline run`), so a laptop, `act` and Actions give the same
@@ -23,13 +24,31 @@ on:
         type: string
         required: true
       deploy-env:
-        description: Target environment for the deploy stage; empty skips deploy
+        description: >-
+          AWS environment to deploy to, for example dev. Plans on pull requests,
+          applies on pushes to the default branch. Empty skips the deploy job.
         type: string
         default: ""
       deploy-local:
-        description: Deploy to LocalStack instead of AWS (for act)
+        description: Target LocalStack instead of AWS (for act); the AWS stages skip
         type: boolean
         default: false
+      aws-region:
+        description: AWS region of the environment
+        type: string
+        default: us-east-1
+      aws-plan-role-arn:
+        description: Read-only role pull requests assume through OIDC to plan (bootstrap output plan_role_arn)
+        type: string
+        default: ""
+      aws-deploy-role-arn:
+        description: Role the default branch assumes through OIDC to apply (bootstrap output deploy_role_arn)
+        type: string
+        default: ""
+      tf-state-bucket:
+        description: Terraform state bucket (bootstrap output state_bucket)
+        type: string
+        default: ""
       components:
         description: Comma-separated component names; empty means every component
         type: string
@@ -49,7 +68,8 @@ on:
 
 # No workflow-level permissions: a called workflow may not ask for more than
 # its caller grants, even for a job that ends up skipped. The gates job reads the
-# repo and uploads SARIF; the publish job inherits what the caller grants.
+# repo and uploads SARIF; the publish and deploy jobs inherit what the caller
+# grants.
 
 jobs:
   gates:
@@ -64,8 +84,6 @@ jobs:
     env:
       RLP_SPEC: ${{ inputs.rlp-version }}
       RLP_COMPONENTS: ${{ inputs.components }}
-      RLP_DEPLOY_ENV: ${{ inputs.deploy-env }}
-      RLP_DEPLOY_LOCAL: ${{ inputs.deploy-local }}
       # New code (sast findings, coverage) is measured from here: the PR's base
       # commit, or the commit before a push. Empty means the whole repo is new.
       RLP_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -106,13 +124,6 @@ jobs:
         run: rlp pipeline run --stage package --component "$RLP_COMPONENTS"
       - name: trivy
         run: rlp pipeline run --stage trivy --component "$RLP_COMPONENTS"
-      - name: terraform
-        run: rlp pipeline run --stage terraform --component "$RLP_COMPONENTS"
-      - name: deploy
-        run: |
-          args=(--stage deploy --component "$RLP_COMPONENTS" --deploy-env "$RLP_DEPLOY_ENV")
-          if [ "$RLP_DEPLOY_LOCAL" = "true" ]; then args+=(--deploy-local); fi
-          rlp pipeline run "${args[@]}"
       - name: Gate summary
         if: always()
         run: |
@@ -177,3 +188,122 @@ jobs:
           args=(--registry "$registry" --component "$RLP_COMPONENTS")
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then args+=(--release "$GITHUB_REF_NAME"); fi
           rlp publish "${args[@]}"
+
+  # Plan on every run with deploy-env; apply only on pushes to the default
+  # branch. AWS credentials come from GitHub OIDC: the job exchanges its ID
+  # token for a short-lived session of the plan or deploy role, so no AWS keys
+  # live in GitHub secrets. See docs/aws.md.
+  deploy:
+    needs: [gates, publish]
+    if: >-
+      !cancelled() && inputs.deploy-env != '' && needs.gates.result == 'success' &&
+      (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    # Inherits the caller's grant, which must include id-token: write.
+    concurrency:
+      group: rlp-deploy-${{ github.repository }}-${{ inputs.deploy-env }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RLP_SPEC: ${{ inputs.rlp-version }}
+      RLP_COMPONENTS: ${{ inputs.components }}
+      RLP_DEPLOY_ENV: ${{ inputs.deploy-env }}
+      RLP_DEPLOY_LOCAL: ${{ inputs.deploy-local }}
+      RLP_TF_STATE_BUCKET: ${{ inputs.tf-state-bucket }}
+      AWS_REGION: ${{ inputs.aws-region }}
+      APPLY: >-
+        ${{ github.event_name == 'push' &&
+        github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      PLAN_ROLE: ${{ inputs.aws-plan-role-arn }}
+      DEPLOY_ROLE: ${{ inputs.aws-deploy-role-arn }}
+      TERRAFORM_VERSION: "1.12.2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install rlp
+        run: |
+          case "$RLP_SPEC" in
+            git:*) spec="rlp-cli @ git+https://github.com/rdlucas2/rlp@${RLP_SPEC#git:}" ;;
+            path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
+            *) spec="rlp-cli==${RLP_SPEC}" ;;
+          esac
+          python -m pip install --disable-pip-version-check "$spec"
+          rlp --version
+          # The Terraform modules come from the same rlp as the CLI.
+          case "$RLP_SPEC" in
+            git:*) modules="git::https://github.com/rdlucas2/rlp.git//infra/modules?ref=${RLP_SPEC#git:}" ;;
+            path:*) modules="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}/infra/modules" ;;
+            *) modules="" ;;  # rlp uses the modules at its own version tag
+          esac
+          echo "RLP_MODULES_SOURCE=$modules" >> "$GITHUB_ENV"
+          echo "RLP_REGISTRY=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - name: Install Terraform
+        if: inputs.deploy-local == false
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}"
+          zip="terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          curl -sSfLO "$base/$zip"
+          curl -sSfLO "$base/terraform_${TERRAFORM_VERSION}_SHA256SUMS"
+          grep " ${zip}\$" "terraform_${TERRAFORM_VERSION}_SHA256SUMS" | sha256sum --check --strict
+          unzip -q -o "$zip" terraform -d "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/terraform" version
+      - name: AWS credentials (GitHub OIDC)
+        if: inputs.deploy-local == false
+        run: |
+          if [ "$APPLY" = "true" ]; then role="$DEPLOY_ROLE"; else role="$PLAN_ROLE"; fi
+          if [ -z "$role" ] || [ -z "$RLP_TF_STATE_BUCKET" ]; then
+            echo "::error::deploy-env is set, so aws-plan-role-arn, aws-deploy-role-arn and tf-state-bucket are needed (see docs/aws.md)"
+            exit 1
+          fi
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::no GitHub OIDC token: the calling workflow must grant id-token: write"
+            exit 1
+          fi
+          # Terraform's AWS provider and S3 backend read these and call
+          # AssumeRoleWithWebIdentity themselves; the token is refreshed before each step.
+          cat > "$RUNNER_TEMP/aws-oidc.sh" <<'SCRIPT'
+          curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" |
+            python -c 'import json, sys; print(json.load(sys.stdin)["value"])' > "$RUNNER_TEMP/aws-web-identity-token"
+          SCRIPT
+          {
+            echo "AWS_ROLE_ARN=$role"
+            echo "AWS_WEB_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/aws-web-identity-token"
+            echo "AWS_ROLE_SESSION_NAME=rlp-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          } >> "$GITHUB_ENV"
+      - name: terraform
+        run: |
+          if [ -f "$RUNNER_TEMP/aws-oidc.sh" ]; then bash "$RUNNER_TEMP/aws-oidc.sh"; fi
+          args=(--reset --stage terraform --component "$RLP_COMPONENTS" --deploy-env "$RLP_DEPLOY_ENV")
+          if [ "$RLP_DEPLOY_LOCAL" = "true" ]; then args+=(--deploy-local); fi
+          rlp pipeline run "${args[@]}"
+      - name: deploy
+        if: env.APPLY == 'true'
+        run: |
+          if [ -f "$RUNNER_TEMP/aws-oidc.sh" ]; then bash "$RUNNER_TEMP/aws-oidc.sh"; fi
+          args=(--stage deploy --component "$RLP_COMPONENTS" --deploy-env "$RLP_DEPLOY_ENV")
+          if [ "$RLP_DEPLOY_LOCAL" = "true" ]; then args+=(--deploy-local); fi
+          rlp pipeline run "${args[@]}"
+      - name: Deploy summary
+        if: always()
+        run: |
+          if command -v rlp >/dev/null; then
+            rlp pipeline summary >> "$GITHUB_STEP_SUMMARY"
+            rlp pipeline summary
+          fi
+      - name: Upload deploy results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: rlp-deploy-results
+          path: |
+            ${{ inputs.working-directory }}/.rlp/pipeline/results.json
+            ${{ inputs.working-directory }}/.rlp/infra/*/policy/plan.json
+          if-no-files-found: warn
