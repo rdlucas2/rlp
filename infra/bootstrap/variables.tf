@@ -12,6 +12,11 @@ variable "state_bucket" {
 variable "github_repositories" {
   description = "GitHub repositories (owner/name) whose pipelines may assume the rlp roles."
   type        = list(string)
+
+  validation {
+    condition     = alltrue([for repo in var.github_repositories : can(regex("^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", repo))])
+    error_message = "Each entry must be owner/name, for example rdlucas2/hello-api."
+  }
 }
 
 variable "deploy_branch" {
