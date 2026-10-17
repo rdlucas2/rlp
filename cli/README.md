@@ -38,6 +38,8 @@ Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git
 | `rlp run\|smoke --native` | Run the component's own `run` or `smoke` verb instead, without Docker |
 | `rlp new TEMPLATE [DEST] [--data K=V] [--defaults]` | Render a Copier template, then validate the result |
 | `rlp update [PATH] [--data K=V] [--defaults]` | Update a rendered repo to a newer template version with Copier, then validate it |
+| `rlp template certify [PATH] [--skip GATE] [--report FILE]` | Render a template with its `conformance.answers` and run every gate on the result; exits 0 only when certified ([docs/conformance.md](../docs/conformance.md)) |
+| `rlp template summary FILE` | Print a conformance report as Markdown |
 | `rlp reports [--path ROOT]` | Print each component's report paths and the Sonar properties they map to |
 | `rlp coverage [--path ROOT]` | Check each component's coverage report against `quality.coverage.minimum`, or the platform floor |
 | `rlp secrets scan [PATH]` | Scan for secrets with the pinned gitleaks: full git history in a work tree, else the files |
