@@ -1,0 +1,10 @@
+.git
+.venv
+.rlp
+.tools
+.task
+reports
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.coverage

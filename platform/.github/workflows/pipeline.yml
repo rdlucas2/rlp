@@ -1,0 +1,23 @@
+# Runs the rlp golden pipeline: every gate, then publishing on main and tags.
+# The gate logic lives in rlp itself; see https://github.com/rdlucas2/rlp/blob/main/docs/pipeline.md
+name: pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  golden:
+    # Pin both the workflow and the CLI to the same rlp commit.
+    uses: rdlucas2/rlp/.github/workflows/golden.yml@0a52b6cd26815b5682e8502b8333000db7a52a5d
+    with:
+      rlp-version: "git:0a52b6cd26815b5682e8502b8333000db7a52a5d"
+    permissions:
+      contents: write          # publish: attach zips and jars to GitHub Releases
+      packages: write          # publish: push images to GHCR
+      security-events: write   # gates: upload SARIF to code scanning
