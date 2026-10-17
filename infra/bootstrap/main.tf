@@ -275,6 +275,31 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
 
+  # EC2 also authorizes CreateSecurityGroup against the VPC, which carries no
+  # rlp tag; the new security group itself must still be tagged (CreateTagged).
+  statement {
+    sid       = "SecurityGroupsInVpcs"
+    actions   = ["ec2:CreateSecurityGroup"]
+    resources = ["arn:${local.partition}:ec2:*:${local.account}:vpc/*"]
+  }
+
+  # Rule changes are also authorized against the rule itself, which is new or
+  # untagged (the default egress rule). Each of these actions also requires
+  # the security group, so ManageTagged still limits them to rlp-tagged groups.
+  statement {
+    sid = "SecurityGroupRules"
+    actions = [
+      "ec2:AuthorizeSecurityGroupEgress",
+      "ec2:AuthorizeSecurityGroupIngress",
+      "ec2:ModifySecurityGroupRules",
+      "ec2:RevokeSecurityGroupEgress",
+      "ec2:RevokeSecurityGroupIngress",
+      "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
+      "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
+    ]
+    resources = ["arn:${local.partition}:ec2:*:${local.account}:security-group-rule/*"]
+  }
+
   # Change and delete only resources that already carry the tag.
   statement {
     sid = "ManageTagged"
