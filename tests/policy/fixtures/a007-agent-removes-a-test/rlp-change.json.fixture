@@ -1,0 +1,25 @@
+{
+  "rlp_change": {
+    "baseline": "0123456789abcdef0123456789abcdef01234567",
+    "author": "rdlucas2",
+    "labels": [
+      "agent:authored"
+    ],
+    "files": [
+      {
+        "path": "tests/test_app.py",
+        "status": "M",
+        "added": [],
+        "removed": [
+          "def test_handler():",
+          "    assert handler() == 1"
+        ]
+      }
+    ],
+    "contracts": {},
+    "results": {
+      "base": null,
+      "head": null
+    }
+  }
+}

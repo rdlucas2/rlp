@@ -34,7 +34,7 @@ MESSAGE = re.compile(r"^\[(RLP-[A-Z][0-9]{3})\] (\S+) (.+?): (.+)\. Fix: (.+)\.$
 
 # Stored name -> real name. conftest reads any file with "dockerfile" in its
 # name as a Dockerfile, so the stored name avoids that word.
-STORED_NAMES = {"Containerfile.fixture": "Dockerfile", "plan.json.fixture": "plan.json"}
+STORED_NAMES = {"Containerfile.fixture": "Dockerfile", "plan.json.fixture": "plan.json", "rlp-change.json.fixture": "rlp-change.json"}
 
 
 def restore_names(repo: Path) -> None:

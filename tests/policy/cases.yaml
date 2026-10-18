@@ -3,9 +3,9 @@
 # must fail, and only those. `copy` adds repo files before the check;
 # `namespaces` limits the check (default: all namespaces).
 #
-# Dockerfiles are stored as Containerfile.fixture and Terraform plans as
-# plan.json.fixture; the tests rename them in the temp copy they check. Stored
-# under their real names, `rlp policy check` on the rlp repo would report the
+# Dockerfiles are stored as Containerfile.fixture, Terraform plans as
+# plan.json.fixture and change documents as rlp-change.json.fixture; the tests
+# rename them in the temp copy they check. Stored under their real names, `rlp policy check` on the rlp repo would report the
 # fixtures' deliberate violations (#62).
 cases:
   slice0-app:
@@ -131,3 +131,58 @@ cases:
     description: The final stage runs as root.
     expect:
       - RLP-D002
+
+  # Anti-cheat fixtures (#50): rlp-change.json.fixture is the change document
+  # `rlp policy check` builds from git and the PR (cli/src/rlp_cli/change.py).
+  agent-clean-change:
+    description: An agent-authored change that fixes code and adds a test passes the anti-cheat rules.
+    namespaces:
+      - rlp.agent
+    expect: []
+  agent-human-weakens-gates:
+    description: A human change that edits gate files, lowers the minimum and adds a suppression passes the anti-cheat rules.
+    namespaces:
+      - rlp.agent
+    expect: []
+  a001-agent-edits-vex:
+    description: An agent-authored change adds a VEX exception.
+    namespaces:
+      - rlp.agent
+    expect:
+      - RLP-A001
+  a002-agent-lowers-coverage-minimum:
+    description: An agent-authored change lowers quality.coverage.minimum.
+    namespaces:
+      - rlp.agent
+    expect:
+      - RLP-A002
+  a003-agent-changes-test-task:
+    description: An agent-authored change narrows the Taskfile test task.
+    namespaces:
+      - rlp.agent
+    expect:
+      - RLP-A003
+  a004-agent-adds-nosemgrep:
+    description: An agent-authored change adds a nosemgrep comment.
+    namespaces:
+      - rlp.agent
+    expect:
+      - RLP-A004
+  a005-agent-drops-test-count:
+    description: An agent-authored change runs fewer tests than its base.
+    namespaces:
+      - rlp.agent
+    expect:
+      - RLP-A005
+  a006-agent-drops-coverage:
+    description: An agent-authored change lowers line coverage against its base.
+    namespaces:
+      - rlp.agent
+    expect:
+      - RLP-A006
+  a007-agent-removes-a-test:
+    description: An agent-authored change deletes a test.
+    namespaces:
+      - rlp.agent
+    expect:
+      - RLP-A007

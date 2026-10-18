@@ -1,0 +1,50 @@
+{
+  "rlp_change": {
+    "baseline": "0123456789abcdef0123456789abcdef01234567",
+    "author": "rdlucas2",
+    "labels": [
+      "agent:authored"
+    ],
+    "files": [
+      {
+        "path": "Taskfile.yml",
+        "status": "M",
+        "added": [
+          {
+            "line": 1,
+            "text": "      - pytest -k 'not flaky'"
+          }
+        ],
+        "removed": []
+      }
+    ],
+    "contracts": {
+      "Taskfile.yml": {
+        "before": {
+          "version": "3",
+          "tasks": {
+            "test": {
+              "cmds": [
+                "pytest"
+              ]
+            }
+          }
+        },
+        "after": {
+          "version": "3",
+          "tasks": {
+            "test": {
+              "cmds": [
+                "pytest -k 'not flaky'"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "results": {
+      "base": null,
+      "head": null
+    }
+  }
+}

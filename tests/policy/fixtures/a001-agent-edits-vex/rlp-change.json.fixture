@@ -1,0 +1,27 @@
+{
+  "rlp_change": {
+    "baseline": "0123456789abcdef0123456789abcdef01234567",
+    "author": "rdlucas2",
+    "labels": [
+      "agent:authored"
+    ],
+    "files": [
+      {
+        "path": ".rlp/vex.yaml",
+        "status": "M",
+        "added": [
+          {
+            "line": 1,
+            "text": "  - id: CVE-2026-0001"
+          }
+        ],
+        "removed": []
+      }
+    ],
+    "contracts": {},
+    "results": {
+      "base": null,
+      "head": null
+    }
+  }
+}
