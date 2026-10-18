@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rdlucas2/rlp/main/schemas/v1alpha1/loop-state.schema.json",
+  "title": "rlp remediation loop state (.rlp/loops/<kind>-<run-id>.json)",
+  "description": "What one `rlp loop <kind>` run did: every iteration's findings, agent result, diff stat and gate results, the spend, and the outcome. Written by rlp, read by people, CI and later loop steps.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind",
+    "loop",
+    "runId",
+    "branch",
+    "base",
+    "provider",
+    "limits",
+    "verifyStages",
+    "allowedPaths",
+    "startedAt",
+    "finishedAt",
+    "findings",
+    "iterations",
+    "spend",
+    "outcome",
+    "reason"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "rlp/v1alpha1"
+    },
+    "kind": {
+      "const": "LoopState"
+    },
+    "loop": {
+      "description": "The loop kind, for example quality or vuln.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "branch": {
+      "description": "The branch the loop committed to, rlp/loop/<kind>/<run-id>. Empty when there was nothing to fix.",
+      "type": "string"
+    },
+    "base": {
+      "description": "The branch (or commit) checked out when the run started. The loop never commits to it.",
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "description": "The agent provider, for example claude-code or fake.",
+      "type": "string",
+      "minLength": 1
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxIterations", "maxSpendUsd"],
+      "properties": {
+        "maxIterations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxSpendUsd": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "verifyStages": {
+      "description": "Golden pipeline stages that must pass for the loop to count as fixed.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "allowedPaths": {
+      "description": "Paths the agent may change. An attempt that changes anything else is thrown away.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "startedAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "finishedAt": {
+      "description": "Null while the run is still going.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "findings": {
+      "description": "What discovery found before the first iteration.",
+      "$ref": "#/$defs/findings"
+    },
+    "iterations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/iteration"
+      }
+    },
+    "spend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spentUsd", "calls"],
+      "properties": {
+        "spentUsd": {
+          "description": "Sum of the cost each agent call reported.",
+          "type": "number",
+          "minimum": 0
+        },
+        "calls": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "outcome": {
+      "description": "running until the loop stops; then fixed (exit 0), no-findings (exit 0), escalated (exit 1) or error (exit 2).",
+      "enum": ["running", "fixed", "escalated", "no-findings", "error"]
+    },
+    "reason": {
+      "description": "Why the loop stopped, in one line.",
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "description": "One finding. Kinds add their own fields (id, path, line, rule, severity).",
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "iteration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "findings", "agent", "diffStat", "gates", "rejected", "commit", "spentUsd"],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "findings": {
+          "description": "The findings this iteration's prompt was built from.",
+          "$ref": "#/$defs/findings"
+        },
+        "agent": {
+          "$ref": "#/$defs/agentResult"
+        },
+        "diffStat": {
+          "description": "The accepted change, as git counts it. Zero when the attempt was thrown away.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["files", "insertions", "deletions"],
+          "properties": {
+            "files": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "insertions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "deletions": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "gates": {
+          "description": "The verify stages' results after this iteration. Empty when the attempt was thrown away.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["stage", "status", "detail"],
+            "properties": {
+              "stage": {
+                "type": "string"
+              },
+              "status": {
+                "enum": ["passed", "failed", "skipped", "not-run"]
+              },
+              "detail": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "rejected": {
+          "description": "Why the attempt was thrown away; empty when it was kept.",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit on the loop branch holding this attempt; empty when nothing was committed.",
+          "type": "string"
+        },
+        "spentUsd": {
+          "description": "Spend so far, after this iteration.",
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "agentResult": {
+      "description": "rlp_cli.agent.AgentResult.as_dict() (docs/loops.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "ok", "summary", "changedFiles", "outsideAllowed", "tokens", "costUsd", "overBudget"],
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "changedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outsideAllowed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "output"],
+          "properties": {
+            "input": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "costUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "overBudget": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

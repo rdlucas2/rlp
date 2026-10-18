@@ -1,0 +1,17 @@
+# Invalid: loops.enabled is a boolean, not a string.
+# expect-error: /loops/enabled
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: container-service
+      port: 8000
+loops:
+  enabled: "yes"

@@ -15,6 +15,8 @@ PACKAGE_DATA = Path(__file__).resolve().parent / "_data"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 SCHEMA_FILES = {"Repo": "repo.schema.json", "Template": "template.schema.json"}
+# Schemas for files rlp writes itself, not contracts a person authors.
+STATE_SCHEMA_FILES = {"LoopState": "loop-state.schema.json"}
 
 
 def data_root() -> Path:
@@ -30,7 +32,7 @@ def policy_dir() -> Path:
 
 
 def schema_path(kind: str) -> Path:
-    return data_root() / "schemas" / "v1alpha1" / SCHEMA_FILES[kind]
+    return data_root() / "schemas" / "v1alpha1" / (SCHEMA_FILES.get(kind) or STATE_SCHEMA_FILES[kind])
 
 
 @cache

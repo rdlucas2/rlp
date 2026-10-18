@@ -1,0 +1,18 @@
+# Valid: remediation loops opted in, limited to the quality kind.
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: fixture
+  project: fixture
+components:
+  - name: api
+    language: python
+    artifact:
+      kind: container-image
+    runtime:
+      kind: container-service
+      port: 8000
+loops:
+  enabled: true
+  kinds:
+    - quality

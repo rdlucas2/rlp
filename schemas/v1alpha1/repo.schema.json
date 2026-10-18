@@ -27,6 +27,9 @@
     },
     "quality": {
       "$ref": "#/$defs/quality"
+    },
+    "loops": {
+      "$ref": "#/$defs/loops"
     }
   },
   "$defs": {
@@ -370,6 +373,26 @@
           "description": "OTEL_SERVICE_NAME. Defaults to <metadata.name>-<component name>.",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "loops": {
+      "description": "Remediation loops (rlp loop <kind>). Off unless enabled here; RLP_LOOPS=off in the environment turns them off whatever this says.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Opt the repo in to remediation loops.",
+          "type": "boolean",
+          "default": false
+        },
+        "kinds": {
+          "description": "Only these loop kinds may run. Absent: every kind.",
+          "type": "array",
+          "items": {
+            "enum": ["quality", "vuln"]
+          },
+          "uniqueItems": true
         }
       }
     },
