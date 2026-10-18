@@ -1,0 +1,44 @@
+# The rlp repo is project #1 (#18): it runs the same golden pipeline as any rlp
+# project, on its own root rlp.yaml. It calls golden.yml and installs rlp from
+# this checkout, so a pull request is gated by the pipeline and CLI it changes.
+#
+# The CLI isn't a component yet, so ci.yml and cli.yml still test it.
+#
+# Deploying is off until the repo variables are set (see docs/aws.md):
+#   RLP_DEPLOY_ENV            environment to deploy to, for example dev
+#   RLP_AWS_REGION            region of the environment (default us-east-1)
+#   RLP_AWS_PLAN_ROLE_ARN     bootstrap output plan_role_arn
+#   RLP_AWS_DEPLOY_ROLE_ARN   bootstrap output deploy_role_arn
+#   RLP_TF_STATE_BUCKET       bootstrap output state_bucket
+name: pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  golden:
+    uses: ./.github/workflows/golden.yml
+    with:
+      rlp-version: "path:."
+      deploy-env: ${{ vars.RLP_DEPLOY_ENV }}
+      aws-region: ${{ vars.RLP_AWS_REGION || 'us-east-1' }}
+      aws-plan-role-arn: ${{ vars.RLP_AWS_PLAN_ROLE_ARN }}
+      aws-deploy-role-arn: ${{ vars.RLP_AWS_DEPLOY_ROLE_ARN }}
+      tf-state-bucket: ${{ vars.RLP_TF_STATE_BUCKET }}
+    secrets:
+      infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+    permissions:
+      contents: write          # publish: attach zips and jars to GitHub Releases
+      packages: write          # publish: push the platform image to GHCR
+      security-events: write   # gates: upload SARIF to code scanning
+      id-token: write          # deploy: GitHub OIDC for AWS, used only when RLP_DEPLOY_ENV is set
