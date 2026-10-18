@@ -66,7 +66,7 @@ rlp update            # move to the template's latest version; review the diff, 
 The rlp repo is project #1. Its root [`rlp.yaml`](../rlp.yaml) declares the `platform` component (`platform/`, rendered from the python-fastapi template), so from the repo root:
 
 ```sh
-task run      # rlp run: the platform stub and its Postgres in Docker Compose
+task run      # rlp run: the platform stub in Docker Compose
 task smoke    # rlp smoke
 ```
 

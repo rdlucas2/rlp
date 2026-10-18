@@ -6,6 +6,11 @@
 # template's own copy of this component, kept so `rlp update platform` works;
 # this file is the contract the pipeline and `rlp run` read for the repo.
 #
+# No backing services yet. The Postgres state store arrives with the slice 2
+# API (#3); in AWS, rlp doesn't create databases in S0, so a declared postgres
+# service would leave DATABASE_URL as an empty secret and the task couldn't
+# start. Without DATABASE_URL, /readyz doesn't check a database.
+#
 # The CLI (cli/) is not a component yet: its outputs are a wheel and per-OS
 # binaries, and v1alpha1 has no artifact kind or runtime for either. Until it
 # does, the CLI keeps its own workflows (ci.yml, cli.yml, release.yml).
@@ -44,13 +49,6 @@ components:
       - name: LOG_LEVEL
         description: Log level for the JSON logger (debug, info, warning, error, critical).
         default: info
-      - name: DATABASE_URL
-        description: Connection string for the platform's Postgres state store; /readyz checks it is reachable when set.
-        from: service:db
-    services:
-      - name: db
-        kind: postgres
-        version: "17"
     telemetry:
       enabled: true
       serviceName: rlp-platform
