@@ -48,6 +48,7 @@ Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git
 | `rlp infra render --env ENV` | Write the AWS Terraform stack for `rlp.yaml` to `.rlp/infra/ENV/main.tf.json` ([docs/aws.md](../docs/aws.md)) |
 | `rlp infra destroy --env ENV` | Tear the environment's stack down with `terraform destroy` |
 | `rlp onboard OWNER/REPO [--env ENV] [--dry-run] [--yes]` | Let a repo deploy: add it to the bootstrap's OIDC trust and set its `RLP_*` variables (and `INFRACOST_API_KEY`) with `gh` ([docs/aws.md](../docs/aws.md#onboard-a-repo)) |
+| `rlp agent check [--provider NAME]` | Check that the agent provider the remediation loops use can run here: credentials in the environment and its CLI on `PATH` ([docs/loops.md](../docs/loops.md)) |
 | `rlp pipeline stages\|run\|summary` | Run the golden pipeline's gates locally, exactly as CI does ([docs/pipeline.md](../docs/pipeline.md)) |
 
 Verb overrides are split with POSIX shell rules on every OS and run without a shell: no pipes, globs or variable expansion. Put anything more complex in a Taskfile task. Write paths with forward slashes.

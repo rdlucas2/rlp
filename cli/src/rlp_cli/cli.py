@@ -16,7 +16,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, artifacts, certify, contract, coverage, infra, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, certify, contract, coverage, infra, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -402,6 +402,38 @@ def coverage_cmd(ctx: click.Context, root: Path, components: tuple[str, ...]) ->
                 verdict = "ok" if r.ok else "below minimum"
                 click.echo(f"{r.component}: {r.percent:.1f}% of lines ({r.format}), minimum {r.minimum:g}%: {verdict}")
     ctx.exit(0 if ok else 1)
+
+
+@cli.group(name="agent")
+def agent_group() -> None:
+    """The agent provider that remediation loops use (docs/loops.md)."""
+
+
+def provider_option(func):
+    """Add --provider; without it, RLP_AGENT_PROVIDER, else claude-code."""
+    return click.option(
+        "--provider",
+        type=click.Choice(sorted(agent.PROVIDERS)),
+        default=None,
+        help=f"Agent provider. Default: ${agent.PROVIDER_ENV}, else {agent.DEFAULT_PROVIDER}.",
+    )(func)
+
+
+@agent_group.command(name="check")
+@provider_option
+@output_option
+@click.pass_context
+def agent_check(ctx: click.Context, provider: str | None) -> None:
+    """Check that the agent provider can run here: credentials and tools."""
+    try:
+        chosen = agent.get_provider(provider)
+        chosen.check()
+    except agent.AgentError as err:
+        fail(ctx, str(err))
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "provider": chosen.name})
+    else:
+        click.echo(f"agent provider {chosen.name}: ready")
 
 
 @cli.group(name="secrets")
