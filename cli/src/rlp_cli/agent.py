@@ -199,6 +199,10 @@ def _normalise_allowed(workdir: Path, allowed_paths: Sequence[str]) -> list[str]
 # --- claude-code ---
 
 
+def _process_env() -> Mapping[str, str]:
+    return os.environ
+
+
 CLAUDE_CREDENTIALS = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 READ_TOOLS = ("Read", "Glob", "Grep")
 
@@ -214,7 +218,7 @@ class ClaudeCodeProvider:
     repo are not loaded, so the repo can't widen permissions or supply a key.
     """
 
-    env: Mapping[str, str] = field(default_factory=lambda: os.environ)
+    env: Mapping[str, str] = field(default_factory=_process_env)
     executable: str = "claude"
     model: str | None = None
     timeout: float = 1800.0
@@ -398,8 +402,12 @@ class FakeProvider:
 # --- selection ---
 
 
+def _claude_code(env: Mapping[str, str]) -> ClaudeCodeProvider:
+    return ClaudeCodeProvider(env=env)
+
+
 PROVIDERS: dict[str, Callable[[Mapping[str, str]], AgentProvider]] = {
-    "claude-code": lambda env: ClaudeCodeProvider(env=env),
+    "claude-code": _claude_code,
     "fake": FakeProvider.from_env,
 }
 
