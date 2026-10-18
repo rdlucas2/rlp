@@ -18,7 +18,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from rlp_cli import baseline, contract, cost, coverage, infra, policy, sast, secrets, sonar, trivy, verbs, vex
+from rlp_cli import baseline, change, contract, cost, coverage, infra, policy, reports, sast, secrets, sonar, trivy, verbs, vex
 
 # (stage, what it gates). Order is the pipeline order.
 STAGES = [
@@ -100,7 +100,7 @@ def stage_validate(ctx: Context) -> StageResult:
 
 
 def stage_policy(ctx: Context) -> StageResult:
-    violations = policy.check(ctx.root)
+    violations = policy.check(ctx.root, change=change.build(ctx.root))
     if violations:
         rules = ", ".join(sorted({v.rule for v in violations}))
         return StageResult("policy", "failed", f"{len(violations)} violation(s): {rules}", data={"violations": [v.as_dict() for v in violations]})
@@ -117,6 +117,9 @@ def run_verb(ctx: Context, verb: str) -> StageResult:
     per = {s.component: "passed" if s.ok else "failed" for s in steps}
     failed = [s for s in steps if not s.ok]
     data = {"steps": [s.as_dict(ctx.root) for s in steps]}
+    if verb == "test":
+        # Test counts per component, for the rlp.agent rule against dropping tests.
+        data["tests"] = reports.junit_counts(ctx.root, ctx.doc(), [s.component for s in steps])
     if failed:
         detail = "; ".join(f"{s.component} exited {s.exit_code}" + (f" ({s.error})" if s.error else "") for s in failed)
         return StageResult(verb, "failed", detail, components=per, data=data)
@@ -308,7 +311,7 @@ def run(ctx: Context, stages: list[str], reset: bool = False) -> list[StageResul
         start = time.monotonic()
         try:
             result = RUNNERS[name](ctx)
-        except (contract.ContractError, verbs.VerbError, policy.PolicyError, secrets.ScanError, coverage.CoverageError, sonar.SonarError, trivy.ScanError, vex.VexError, sast.SastError, baseline.BaselineError, infra.InfraError, cost.CostError) as err:
+        except (contract.ContractError, verbs.VerbError, policy.PolicyError, change.ChangeError, secrets.ScanError, coverage.CoverageError, sonar.SonarError, trivy.ScanError, vex.VexError, sast.SastError, baseline.BaselineError, infra.InfraError, cost.CostError) as err:
             result = StageResult(name, "failed", str(err))
         result.seconds = round(time.monotonic() - start, 3)
         ran.append(result)

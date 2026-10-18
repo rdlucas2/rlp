@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+import xml.etree.ElementTree as ET
+from pathlib import Path, PurePosixPath
 
 # (coverage format, language) -> Sonar property; language None matches any.
 COVERAGE_PROPERTIES = {
@@ -64,3 +65,23 @@ def sonar_properties(entries: list[dict]) -> dict[str, str]:
         if e["sonar_property"]:
             props.setdefault(e["sonar_property"], []).append(e["path"])
     return {k: ",".join(v) for k, v in sorted(props.items())}
+
+
+def junit_count(path: Path) -> int | None:
+    """Test cases in a JUnit XML report, or None when it is missing or unreadable."""
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    return sum(1 for _ in root.iter("testcase"))
+
+
+def junit_counts(root: Path, doc: dict, components: list[str]) -> dict[str, int]:
+    """Test cases per component, from each declared JUnit report that could be read."""
+    counts = {}
+    for entry in resolve(doc):
+        if entry["report"] == "junit" and entry["component"] in components:
+            n = junit_count(root / entry["path"])
+            if n is not None:
+                counts[entry["component"]] = n
+    return counts

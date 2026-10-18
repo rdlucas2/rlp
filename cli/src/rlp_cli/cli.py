@@ -16,7 +16,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, agent, artifacts, certify, contract, coverage, infra, loop, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, infra, loop, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -110,13 +110,21 @@ def policy_group() -> None:
 @policy_group.command(name="check")
 @click.argument("path", type=click.Path(path_type=Path, file_okay=False), default=".")
 @click.option("--namespace", "-n", "namespaces", multiple=True, help="Only these policy namespaces, e.g. rlp.terraform. Repeatable. Default: all.")
+@click.option("--base-results", type=click.Path(path_type=Path, dir_okay=False), default=None, help="results.json of the baseline commit, for the test-count and coverage rules. Default: $RLP_BASE_RESULTS.")
+@click.option("--head-results", type=click.Path(path_type=Path, dir_okay=False), default=None, help="results.json of this change. Default: .rlp/pipeline/results.json under PATH.")
 @output_option
 @click.pass_context
-def policy_check(ctx: click.Context, path: Path, namespaces: tuple[str, ...]) -> None:
-    """Check the repo at PATH against the policy bundle with conftest."""
+def policy_check(ctx: click.Context, path: Path, namespaces: tuple[str, ...], base_results: Path | None, head_results: Path | None) -> None:
+    """Check the repo at PATH against the policy bundle with conftest.
+
+    The rlp.agent rules also judge the change since the baseline commit (see
+    policy/README.md): who authored it, the files it touched, and test counts
+    and coverage before and after.
+    """
     try:
-        violations = policy.check(path, namespaces)
-    except policy.PolicyError as err:
+        doc = change.build(path, base_results, head_results) if path.is_dir() else None
+        violations = policy.check(path, namespaces, doc)
+    except (policy.PolicyError, change.ChangeError, baseline.BaselineError) as err:
         fail(ctx, str(err))
     if ctx.obj["output"] == "json":
         emit_json({"ok": not violations, "violations": [v.as_dict() for v in violations]})
