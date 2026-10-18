@@ -1,4 +1,5 @@
-# Set these as repository variables on each project repo (see infra/README.md).
+# Set these as repository variables on each project repo (see infra/README.md), or
+# let `rlp onboard OWNER/REPO` set them.
 
 output "state_bucket" {
   description = "RLP_TF_STATE_BUCKET"
@@ -18,4 +19,17 @@ output "deploy_role_arn" {
 output "region" {
   description = "RLP_AWS_REGION"
   value       = var.region
+}
+
+# Read back by `rlp onboard`, which re-applies the stack with every input unchanged
+# except the repository it adds.
+
+output "github_repositories" {
+  description = "Repositories whose pipelines may assume the rlp roles."
+  value       = var.github_repositories
+}
+
+output "deploy_branch" {
+  description = "The only branch whose pipeline may assume rlp-deploy."
+  value       = var.deploy_branch
 }

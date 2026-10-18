@@ -61,7 +61,7 @@ You need Terraform 1.10 or later and administrator credentials for the account.
    terraform apply -var environment=dev
    ```
 
-3. In each project repo, add the bootstrap outputs as repository variables: `RLP_AWS_PLAN_ROLE_ARN`, `RLP_AWS_DEPLOY_ROLE_ARN`, `RLP_TF_STATE_BUCKET` and `RLP_AWS_REGION`. They are identifiers, not secrets.
+3. Onboard each project repo with `rlp onboard` (see [Onboard a repo](#onboard-a-repo)), or by hand: re-apply the bootstrap with the repo added to `github_repositories`, then add the bootstrap outputs as repository variables: `RLP_AWS_PLAN_ROLE_ARN`, `RLP_AWS_DEPLOY_ROLE_ARN`, `RLP_TF_STATE_BUCKET` and `RLP_AWS_REGION`, plus `RLP_DEPLOY_ENV`, the environment its pipeline deploys to. They are identifiers, not secrets.
 
 4. Call the golden pipeline with a `deploy-env` and grant `id-token: write`:
 
@@ -90,6 +90,31 @@ You need Terraform 1.10 or later and administrator credentials for the account.
    ```
 
 The image must be pullable without credentials: make the GHCR package public.
+
+## Onboard a repo
+
+`rlp onboard OWNER/REPO` does step 3 in one command. Run it where the bootstrap's state lives, with the same administrator AWS credentials and a `gh` login that has admin access to the repo:
+
+```sh
+rlp onboard rdlucas2/hello-api --dry-run          # show what would change
+INFRACOST_API_KEY=... rlp onboard rdlucas2/hello-api --env dev
+```
+
+It:
+
+1. reads the bootstrap's outputs with `terraform output -json` (from `infra/bootstrap`, or `--bootstrap-dir`);
+2. when the repo isn't in `github_repositories` yet, runs `terraform apply` there with every bootstrap variable passed explicitly in a var file: the current values, with the repo appended to the list, so nothing else changes. Terraform shows the plan and asks for approval unless you pass `--yes`;
+3. sets `RLP_AWS_REGION`, `RLP_AWS_PLAN_ROLE_ARN`, `RLP_AWS_DEPLOY_ROLE_ARN`, `RLP_TF_STATE_BUCKET` and `RLP_DEPLOY_ENV` (from `--env`, default `dev`) on the repo with `gh variable set`;
+4. when `INFRACOST_API_KEY` is set in your environment and the repo has no such secret yet, sets it with `gh secret set`, passing the value on stdin, never on the command line. An existing secret is kept; replace it with `gh secret set` yourself.
+
+Running it again on an onboarded repo prints "already onboarded" and changes nothing. `--output json` needs `--yes` when the bootstrap must be applied.
+
+A bootstrap applied before `rlp onboard` existed has no `github_repositories` and `deploy_branch` outputs yet. `rlp onboard` says so; run `terraform apply` once in `infra/bootstrap` with your usual variables to record them.
+
+Still manual, after the repo's first publish:
+
+- make its GHCR package public (GitHub has no API for package visibility on personal accounts);
+- mark the pipeline's checks as required in the repo's branch protection, if you want them to gate merges.
 
 ## The pipeline
 

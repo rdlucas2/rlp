@@ -23,7 +23,7 @@ Binaries exist for Linux (x86_64, arm64), macOS (Apple silicon) and Windows (x86
 - **macOS**: Gatekeeper may say the binary "cannot be opened". The install script prints the fix: `xattr -d com.apple.quarantine ~/.local/bin/rlp`.
 - **Windows**: SmartScreen may warn on first run. Choose **More info**, then **Run anyway**.
 
-Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git (for `rlp new` and `rlp update` with git templates) Docker with Compose v2 (for `rlp run`, `rlp smoke` and `rlp down`) and Terraform 1.10 or later (for `rlp infra` and the terraform and deploy stages). `rlp policy check` downloads the pinned conftest (and the cost stage the pinned Infracost) on first use into your user cache, checked against its published SHA256 (`RLP_TOOLS_DIR` overrides the location).
+Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git (for `rlp new` and `rlp update` with git templates) Docker with Compose v2 (for `rlp run`, `rlp smoke` and `rlp down`), Terraform 1.10 or later (for `rlp infra`, `rlp onboard` and the terraform and deploy stages), and the GitHub CLI `gh` (for `rlp onboard`). `rlp policy check` downloads the pinned conftest (and the cost stage the pinned Infracost) on first use into your user cache, checked against its published SHA256 (`RLP_TOOLS_DIR` overrides the location).
 
 ## Commands
 
@@ -47,6 +47,7 @@ Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git
 | `rlp publish [--registry R] [--release TAG]` | Push images to a registry; attach zips and jars to a GitHub Release |
 | `rlp infra render --env ENV` | Write the AWS Terraform stack for `rlp.yaml` to `.rlp/infra/ENV/main.tf.json` ([docs/aws.md](../docs/aws.md)) |
 | `rlp infra destroy --env ENV` | Tear the environment's stack down with `terraform destroy` |
+| `rlp onboard OWNER/REPO [--env ENV] [--dry-run] [--yes]` | Let a repo deploy: add it to the bootstrap's OIDC trust and set its `RLP_*` variables (and `INFRACOST_API_KEY`) with `gh` ([docs/aws.md](../docs/aws.md#onboard-a-repo)) |
 | `rlp pipeline stages\|run\|summary` | Run the golden pipeline's gates locally, exactly as CI does ([docs/pipeline.md](../docs/pipeline.md)) |
 
 Verb overrides are split with POSIX shell rules on every OS and run without a shell: no pipes, globs or variable expansion. Put anything more complex in a Taskfile task. Write paths with forward slashes.
