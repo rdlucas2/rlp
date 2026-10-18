@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
+
+from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
 
 # (coverage format, language) -> Sonar property; language None matches any.
 COVERAGE_PROPERTIES = {
@@ -70,8 +72,8 @@ def sonar_properties(entries: list[dict]) -> dict[str, str]:
 def junit_count(path: Path) -> int | None:
     """Test cases in a JUnit XML report, or None when it is missing or unreadable."""
     try:
-        root = ET.parse(path).getroot()
-    except (OSError, ET.ParseError):
+        root = SafeET.parse(path).getroot()
+    except (OSError, SafeET.ParseError, DefusedXmlException):
         return None
     return sum(1 for _ in root.iter("testcase"))
 
