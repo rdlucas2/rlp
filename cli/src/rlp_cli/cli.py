@@ -10,12 +10,13 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
+import os
 import sys
 from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, artifacts, certify, contract, coverage, infra, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, artifacts, certify, contract, coverage, infra, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -593,6 +594,93 @@ def infra_destroy(ctx: click.Context, root: Path, env: str, components: tuple[st
         emit_json({"ok": True, "env": env, "destroyed": stack.components})
     else:
         click.echo(f"destroyed {env}: {', '.join(stack.components)}")
+
+
+# --- onboard ---
+
+
+@cli.command(name="onboard")
+@click.argument("repo", metavar="OWNER/REPO")
+@click.option("--env", "env", default="dev", show_default=True, help="Environment the repo's pipeline deploys to (RLP_DEPLOY_ENV).")
+@click.option(
+    "--bootstrap-dir",
+    "bootstrap",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=Path("infra/bootstrap"),
+    show_default=True,
+    help="The bootstrap stack's directory, where its state lives.",
+)
+@click.option("--dry-run", is_flag=True, help="Print what would change, and change nothing.")
+@click.option("--yes", "-y", "yes", is_flag=True, help="Apply the bootstrap without asking terraform's confirmation.")
+@output_option
+@click.pass_context
+def onboard_cmd(ctx: click.Context, repo: str, env: str, bootstrap: Path, dry_run: bool, yes: bool) -> None:
+    """Let OWNER/REPO deploy through the golden pipeline.
+
+    Adds the repo to the bootstrap's OIDC trust (terraform apply, with every
+    other bootstrap variable unchanged), then sets its RLP_* repository
+    variables and, when INFRACOST_API_KEY is set in the environment, the
+    INFRACOST_API_KEY secret. Uses your own AWS credentials and gh login.
+    """
+    json_mode = ctx.obj["output"] == "json"
+    try:
+        plan, terraform, gh = onboard.prepare(repo, env, bootstrap)
+    except (onboard.OnboardError, infra.InfraError) as err:
+        fail(ctx, str(err))
+    doc = plan.as_dict()
+
+    if plan.onboarded:
+        if json_mode:
+            emit_json({"ok": True, "dry_run": dry_run, **doc, "applied": False, "set": []})
+        else:
+            click.echo(f"{plan.repo} is already onboarded ({env})")
+        return
+
+    if not json_mode:
+        describe_onboard(plan, dry_run)
+    if dry_run:
+        if json_mode:
+            emit_json({"ok": True, "dry_run": True, **doc, "applied": False, "set": []})
+        return
+    if json_mode and plan.add_trust and not yes:
+        fail(ctx, "--output json needs --yes when the bootstrap must be applied: there is no terminal to confirm on")
+
+    done: list[str] = []
+    try:
+        if plan.add_trust:
+            onboard.apply_trust(terraform, bootstrap, plan, yes, stream=sys.stderr if json_mode else None)
+        done += onboard.set_variables(gh, plan)
+        if plan.secret == "set":
+            onboard.set_secret(gh, plan, os.environ[onboard.SECRET])
+            done.append(onboard.SECRET)
+    except onboard.StepError as err:
+        if json_mode:
+            emit_json({"ok": False, "error": str(err), **doc, "set": done})
+        else:
+            click.echo(f"error: {err}", err=True)
+        ctx.exit(1)
+    if json_mode:
+        emit_json({"ok": True, "dry_run": False, **doc, "applied": plan.add_trust, "set": done})
+    else:
+        click.echo(f"onboarded {plan.repo} ({env})")
+
+
+def describe_onboard(plan: onboard.Plan, dry_run: bool) -> None:
+    would = "would " if dry_run else ""
+    if plan.add_trust:
+        click.echo(f"trust: {would}add {plan.repo} to the bootstrap's github_repositories")
+        click.echo(f"  {json.dumps(plan.trusted)} -> {json.dumps(plan.tf_vars['github_repositories'])}")
+    else:
+        click.echo(f"trust: {plan.repo} is already trusted")
+    for name, value in plan.variables.items():
+        state = f"{would}set" if name in plan.changed_variables else "unchanged"
+        click.echo(f"variable {name}={value} ({state})")
+    if plan.secret == "set":
+        click.echo(f"secret {onboard.SECRET}: {would}set from $INFRACOST_API_KEY")
+    elif plan.secret == "exists":
+        click.echo(f"secret {onboard.SECRET}: already set; kept (replace it with `gh secret set`)")
+    else:
+        click.echo(f"secret {onboard.SECRET}: skipped (INFRACOST_API_KEY is not set)")
 
 
 # --- templates ---
