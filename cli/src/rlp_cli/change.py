@@ -7,8 +7,9 @@ builds this document and hands it to conftest next to the repo's own files:
 - who: the PR author and labels, from $RLP_PR_AUTHOR and $RLP_PR_LABELS
   (comma-separated) when set, otherwise from the pull_request event at
   $GITHUB_EVENT_PATH;
-- what: every file changed since the baseline, with its added lines and the
-  removed lines' text, plus untracked files as added;
+- what: every file under root changed since the baseline, with its added lines
+  and the removed lines' text, plus untracked files as added. Paths are relative
+  to root, so a project in a subdirectory is judged on its own files;
 - contracts: rlp.yaml and Taskfiles changed in the diff, parsed before and after;
 - results: test counts and line coverage per component from a base and a head
   .rlp/pipeline/results.json, when both are given.
@@ -52,14 +53,14 @@ def _git(root: Path, *args: str) -> str | None:
 
 
 def _name_status(root: Path, base: str) -> dict[str, str]:
-    out = _git(root, "diff", "--no-renames", "--name-status", "-z", base) or ""
+    out = _git(root, "diff", "--relative", "--no-renames", "--name-status", "-z", base) or ""
     parts = [p for p in out.split("\0") if p]
     return {parts[i + 1]: parts[i][0] for i in range(0, len(parts) - 1, 2)}
 
 
 def _hunks(root: Path, base: str) -> dict[str, dict]:
     """path -> {"added": [{"line", "text"}], "removed": [text]} from a zero-context diff."""
-    out = _git(root, "diff", "--no-renames", "--no-color", "--no-ext-diff", "--unified=0", base) or ""
+    out = _git(root, "diff", "--relative", "--no-renames", "--no-color", "--no-ext-diff", "--unified=0", base) or ""
     files: dict[str, dict] = {}
     old = new = None
     current: dict | None = None
@@ -108,7 +109,7 @@ def _parse_yaml(text: str | None):
 
 
 def _contract(root: Path, base: str, path: str, status: str) -> dict:
-    before = None if status == "A" else _parse_yaml(_git(root, "show", f"{base}:{path}"))
+    before = None if status == "A" else _parse_yaml(_git(root, "show", f"{base}:./{path}"))
     after = None
     if status != "D":
         try:

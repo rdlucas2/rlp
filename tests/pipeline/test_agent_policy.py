@@ -155,3 +155,22 @@ def test_deleted_test_file_and_gate_file_fail(repo):
     assert code == 1
     assert rules(stage) == {"RLP-A001", "RLP-A007"}
     assert any("deletes a protected gate file" in v["message"] for v in stage["data"]["violations"])
+
+
+def test_project_in_a_subdirectory_is_judged_on_its_own_files(tmp_path):
+    mono = tmp_path / "mono"
+    shutil.copytree(FIXTURE, mono / "apps" / "hello")
+    (mono / "policy").mkdir()
+    (mono / "policy" / "rules.rego").write_text("package x\n", encoding="utf-8")
+    git(mono, "init", "-q")
+    commit(mono, "baseline")
+    base = head(mono)
+    (mono / "policy" / "rules.rego").write_text("package y\n", encoding="utf-8")
+    commit(mono, "change a file outside the project")
+    project = mono / "apps" / "hello"
+    code, stage = policy_stage(project, base, AGENT)
+    assert code == 0, stage
+    lower_minimum(project)
+    code, stage = policy_stage(project, base, AGENT)
+    assert code == 1
+    assert rules(stage) == {"RLP-A002"}
