@@ -16,7 +16,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, agent, artifacts, certify, contract, coverage, infra, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, certify, contract, coverage, infra, loop, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -434,6 +434,101 @@ def agent_check(ctx: click.Context, provider: str | None) -> None:
         emit_json({"ok": True, "provider": chosen.name})
     else:
         click.echo(f"agent provider {chosen.name}: ready")
+
+
+# --- loop ---
+
+
+def loop_status_lines(rows: list[dict]) -> list[str]:
+    lines = []
+    for r in rows:
+        state = "on" if r["enabled"] else "off"
+        note = "" if r["implemented"] else " (not implemented yet)"
+        lines.append(f"{r['loop']:8} {state:3} {r['reason']}{note}")
+    return lines
+
+
+def run_loop(ctx: click.Context, kind: str, root: Path, provider: str | None, max_iterations: int, max_spend: float | None, dry_run: bool) -> None:
+    """Run one loop kind and exit with its outcome's code."""
+    json_mode = ctx.obj["output"] == "json"
+    try:
+        opts = loop.Options(
+            max_iterations=max_iterations,
+            max_spend_usd=loop.default_max_spend() if max_spend is None else max_spend,
+            dry_run=dry_run,
+            provider=provider,
+            on_event=None if json_mode else functools.partial(click.echo, err=True),
+        )
+        report = loop.run(root, kind, opts, stream=sys.stderr)
+    except (loop.LoopError, agent.AgentError, contract.ContractError) as err:
+        fail(ctx, str(err))
+    if json_mode:
+        emit_json(report.payload)
+    elif report.outcome == "dry-run":
+        p = report.payload
+        click.echo(f"{kind}: dry run, {len(p['findings'])} finding(s); no agent called")
+        for f in p["findings"]:
+            click.echo(f"  - {f.get('message', '')}")
+        click.echo(f"verify stages: {', '.join(p['verifyStages'])}; allowed paths: {', '.join(p['allowedPaths'])}")
+        click.echo(f"limits: {p['limits']['maxIterations']} iteration(s), ${p['limits']['maxSpendUsd']:.2f}; provider {p['provider']}")
+    else:
+        click.echo(f"{kind}: {report.outcome}: {report.reason}")
+        if report.state_file:
+            click.echo(f"state: {report.state_file}")
+    ctx.exit(report.exit_code)
+
+
+def make_loop_command(kind: str) -> click.Command:
+    registered = loop.KINDS.get(kind)
+    summary = registered.description if registered else f"The {kind} remediation loop."
+
+    @click.command(name=kind, help=f"{summary} Off unless rlp.yaml sets loops.enabled: true; RLP_LOOPS=off turns it off.")
+    @click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+    @provider_option
+    @click.option("--max-iterations", type=click.IntRange(min=1), default=loop.DEFAULT_MAX_ITERATIONS, show_default=True, help="Stop and escalate after this many agent calls.")
+    @click.option("--max-spend", type=click.FloatRange(min=0, min_open=True), default=None, help="Spend cap for the run in USD. Default: loop_max_spend_usd in policy/platform/data.yaml.")
+    @click.option("--dry-run", is_flag=True, help="Discover and print the plan; call no agent and change nothing.")
+    @output_option
+    @click.pass_context
+    def command(ctx: click.Context, root: Path, provider: str | None, max_iterations: int, max_spend: float | None, dry_run: bool) -> None:
+        run_loop(ctx, kind, root, provider, max_iterations, max_spend, dry_run)
+
+    return command
+
+
+class LoopGroup(click.Group):
+    """`rlp loop status`, plus one subcommand per loop kind, read from the registry when called."""
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return sorted({*super().list_commands(ctx), *loop.kind_names()})
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        found = super().get_command(ctx, cmd_name)
+        if found is not None:
+            return found
+        return make_loop_command(cmd_name) if cmd_name in loop.kind_names() else None
+
+
+@cli.group(name="loop", cls=LoopGroup)
+def loop_group() -> None:
+    """Remediation loops: an agent fixes what a gate found, bounded by iteration and spend caps (docs/loops.md)."""
+
+
+@loop_group.command(name="status")
+@click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+@output_option
+@click.pass_context
+def loop_status(ctx: click.Context, root: Path) -> None:
+    """Show whether each loop kind is on for this repo, and why."""
+    try:
+        rows = loop.status(root)
+    except contract.ContractError as err:
+        fail(ctx, str(err))
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "loops": rows})
+        return
+    for line in loop_status_lines(rows):
+        click.echo(line)
 
 
 @cli.group(name="secrets")
