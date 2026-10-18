@@ -1,6 +1,70 @@
 # Remediation loops
 
-A remediation loop reads a failing gate, asks an agent to fix the code, reruns the gate and opens a PR only when it passes. This page covers the piece every loop shares: the **agent provider**, the interface a loop uses to ask an agent for a change. The loop runner (`rlp loop <kind>`, #46) and the individual loops build on it.
+A remediation loop reads a failing gate, asks an agent to fix the code, reruns the gate and opens a PR only when it passes. This page covers the pieces every loop shares: the **on/off toggle**, the **loop runner** (`rlp loop <kind>`) and the **agent provider**, the interface a loop uses to ask an agent for a change. The individual loops (quality #48, vuln #49) build on them.
+
+## Turning loops on and off
+
+Loops are **off by default**. A repo opts in in `rlp.yaml`:
+
+```yaml
+loops:
+  enabled: true
+  kinds: [quality]   # optional: only these kinds; absent means every kind
+```
+
+`RLP_LOOPS=off` in the environment is a kill switch: it turns every loop off whatever `rlp.yaml` says (`0`, `false`, `no` and `disabled` work too). In CI, set it as a repository or organization Actions variable, so loops stop without a commit; delete the variable to turn them back on.
+
+When a loop is off, `rlp loop <kind>` calls no agent, spends nothing, prints why it's off (`rlp.yaml` or `RLP_LOOPS`) and exits 0 with outcome `disabled`. `rlp loop status` shows each kind, whether it's on, and why.
+
+## The loop runner
+
+```sh
+rlp loop status                                  # which kinds are on, and why
+rlp loop quality --dry-run                       # discover and print the plan; no agent, no changes
+rlp loop quality --max-iterations 3 --max-spend 5 --output json
+```
+
+One run goes:
+
+1. **Discover.** The kind lists its findings. None: outcome `no-findings`, nothing else happens.
+2. **Branch.** The runner refuses a work tree with uncommitted changes to tracked files, then creates `rlp/loop/<kind>/<run-id>` from the current branch. It never commits to the base branch, and checks the base branch out again when the run ends.
+3. **Act.** One agent call in a fresh context. The prompt is rebuilt every iteration from the current findings and the last verification's output; no conversation carries over. The agent may change only the kind's allowed paths.
+4. **Verify.** The kind's golden pipeline stages run, as `rlp pipeline run -s <stage>` would. An attempt that changed anything outside the allowed paths is thrown away first (tracked files restored, new files deleted) and the next prompt says why. A kept attempt is committed to the loop branch.
+5. **Iterate** until the verify stages pass, or a cap is hit.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--max-iterations N` | 3 | Agent calls before the loop escalates |
+| `--max-spend USD` | `loop_max_spend_usd` in `policy/platform/data.yaml` | Total the run may spend, counted from what the provider reports. Each call's budget is what's left |
+| `--provider NAME` | `RLP_AGENT_PROVIDER`, else `claude-code` | See [Choosing a provider](#choosing-a-provider) |
+| `--dry-run` | | Discover and print the plan, including the first prompt, without calling the agent or touching git |
+
+Both caps must be positive.
+
+| Outcome | Exit code | When |
+| --- | --- | --- |
+| `fixed` | 0 | The verify stages passed |
+| `no-findings` | 0 | Discovery found nothing to fix |
+| `disabled` | 0 | Loops are off for this repo or kind |
+| `escalated` | 1 | The iteration cap or the spend cap was reached with the gate still failing |
+| `error` | 2 | The loop couldn't start or continue: bad options, a dirty work tree, missing credentials, a git or agent failure |
+
+Opening the PR or the escalation issue is a separate step (#52).
+
+### State
+
+Every run that gets past discovery writes `.rlp/loops/<kind>-<run-id>.json`, updated after each iteration, so a run in progress or a finished one can be inspected. It records the kind, branch and base, the limits, the findings, and for each iteration the findings its prompt was built from, the agent result, the diff stat, the gate results, the commit, whether the attempt was thrown away and the spend so far, then the outcome and why. It validates against [`schemas/v1alpha1/loop-state.schema.json`](../schemas/v1alpha1/loop-state.schema.json). `--output json` prints the same document.
+
+### Adding a loop kind
+
+A kind is a `rlp_cli.loop.LoopKind` registered with `loop.register()`:
+
+- `discover(root, doc)` returns the current findings, each a dict with at least `message` (and usually `path`, `line`, `rule`, `severity`).
+- `verify_stages` names the golden pipeline stages that must pass.
+- `allowed_paths(root, doc)` returns the paths the agent may change. Quality config, suppressions and exception files are never among them.
+- `build_prompt(PromptInput)` is optional; without it the runner's default prompt lists the findings and the failing gate output.
+
+Add the kind's name to `KNOWN_KINDS` in `loop.py` and to the `loops.kinds` enum in `schemas/v1alpha1/repo.schema.json`.
 
 ## The provider interface
 

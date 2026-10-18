@@ -48,6 +48,7 @@ Decided so far; newest first. Reverse a decision by adding a new row, not by edi
 
 | Date | Decision | Why |
 | --- | --- | --- |
+| 2026-10-18 | Remediation loops are opt-in per repo (`loops.enabled` in `rlp.yaml`), with an environment kill switch (`RLP_LOOPS=off`) | An agent that changes code and spends money runs only where a repo asked for it, and can be stopped without a commit |
 | 2026-10-16 | CLI in Python with Click; shipped as a PyPI wheel and as per-OS standalone binaries | Matches the platform stack; binaries run on Windows, macOS and Linux with no Python installed |
 | 2026-10-16 | OPA enforces contract presence and structure, alongside JSON Schema | See the note below the table |
 | 2026-10-16 | Postgres is rlp's state store | Identical locally (container) and in AWS (RDS) |
