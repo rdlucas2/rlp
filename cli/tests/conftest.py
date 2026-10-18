@@ -70,12 +70,25 @@ def python_cmd() -> str:
     return f'"{posix_python()}"'
 
 
+# The policy fixtures store Dockerfiles and plan JSON under other names, so
+# `rlp policy check` on the rlp repo skips them (#62); tests/policy/test_bundle.py
+# holds the same map.
+STORED_FIXTURE_NAMES = {"Containerfile.fixture": "Dockerfile", "plan.json.fixture": "plan.json"}
+
+
+def restore_fixture_names(repo: Path) -> None:
+    for stored, real in STORED_FIXTURE_NAMES.items():
+        for path in list(repo.rglob(stored)):
+            path.rename(path.with_name(real))
+
+
 @pytest.fixture
 def copy_fixture(tmp_path: Path):
     def copy(src: Path, name: str | None = None) -> Path:
         dest = tmp_path / (name or src.name)
         if src.is_dir():
             shutil.copytree(src, dest)
+            restore_fixture_names(dest)
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dest)

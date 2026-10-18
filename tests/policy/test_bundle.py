@@ -5,6 +5,11 @@ Each case in cases.yaml is a small repo. The check is the same one
 bundle in policy/ as policy and data. A case passes when the set of rule ids
 in the failures equals its `expect` list exactly, so an invalid fixture fails
 its own rule and nothing else.
+
+Fixture files that conftest would parse on its own (Dockerfiles, Terraform plan
+JSON) are stored under other names, so `rlp policy check` on the rlp repo
+doesn't report the fixtures' deliberate violations (#62). restore_names() gives
+them their real names in the temp copy each test checks.
 """
 
 from __future__ import annotations
@@ -26,6 +31,16 @@ CASES = yaml.safe_load((HERE / "cases.yaml").read_text(encoding="utf-8"))["cases
 
 RULE_ID = re.compile(r"RLP-[A-Z][0-9]{3}")
 MESSAGE = re.compile(r"^\[(RLP-[A-Z][0-9]{3})\] (\S+) (.+?): (.+)\. Fix: (.+)\.$")
+
+# Stored name -> real name. conftest reads any file with "dockerfile" in its
+# name as a Dockerfile, so the stored name avoids that word.
+STORED_NAMES = {"Containerfile.fixture": "Dockerfile", "plan.json.fixture": "plan.json"}
+
+
+def restore_names(repo: Path) -> None:
+    for stored, real in STORED_NAMES.items():
+        for path in list(repo.rglob(stored)):
+            path.rename(path.with_name(real))
 
 
 def tool(name: str) -> str:
@@ -60,6 +75,7 @@ def test_case(name: str, tmp_path: Path) -> None:
     case = CASES[name]
     repo = tmp_path / name
     shutil.copytree(HERE / "fixtures" / name, repo)
+    restore_names(repo)
     for dest, src in (case.get("copy") or {}).items():
         target = repo / dest
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +86,14 @@ def test_case(name: str, tmp_path: Path) -> None:
     assert {RULE_ID.search(m).group(0) for m in messages} == set(case["expect"]), messages
     for m in messages:
         assert MESSAGE.match(m), f"message does not name file, field and fix: {m}"
+
+
+def test_fixtures_use_stored_names() -> None:
+    # A fixture stored under its real name would be checked by `rlp policy check`
+    # on the rlp repo itself, and the golden pipeline would fail on it.
+    real = set(STORED_NAMES.values())
+    offenders = [p for p in (HERE / "fixtures").rglob("*") if p.is_file() and (p.name in real or "dockerfile" in p.name.lower())]
+    assert not offenders, f"rename these to their stored names {sorted(STORED_NAMES)}: {offenders}"
 
 
 def test_every_rule_has_a_failing_fixture() -> None:
