@@ -2,6 +2,11 @@
 # conftest --combine from that directory. `expect` lists every rule id the case
 # must fail, and only those. `copy` adds repo files before the check;
 # `namespaces` limits the check (default: all namespaces).
+#
+# Dockerfiles are stored as Containerfile.fixture and Terraform plans as
+# plan.json.fixture; the tests rename them in the temp copy they check. Stored
+# under their real names, `rlp policy check` on the rlp repo would report the
+# fixtures' deliberate violations (#62).
 cases:
   slice0-app:
     description: The slice-0 example rlp.yaml in a complete app repo passes every
