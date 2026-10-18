@@ -12,8 +12,10 @@ from rlp_cli import resources, tools
 
 MESSAGE = re.compile(r"^\[(?P<rule>RLP-[A-Z][0-9]{3})\] (?P<file>\S+) (?P<field>.+?): (?P<problem>.+)\. Fix: (?P<fix>.+)\.$")
 
-# Directories conftest should never parse: VCS data, dependencies, caches.
-IGNORE = r"(^|[/\\])(\.git|\.venv|venv|node_modules|\.tools|\.task|\.terraform|\.pytest_cache|__pycache__)([/\\]|$)"
+# Paths conftest should never parse: VCS data, dependencies, caches, and Rego
+# sources. Rego is policy, not configuration, and conftest would read a file
+# like dockerfile.rego as a Dockerfile and fail to parse it.
+IGNORE = r"(^|[/\\])(\.git|\.venv|venv|node_modules|\.tools|\.task|\.terraform|\.pytest_cache|__pycache__)([/\\]|$)|\.rego$"
 
 
 class PolicyError(Exception):

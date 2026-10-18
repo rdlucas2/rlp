@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+coverage.xml
+reports/
+
+# go-task checksums and pinned tool downloads
+.task/
+.tools/
+
+# rlp generated local state (compose files, .env, loop state)
+.rlp/*
+!.rlp/vex.yaml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# act
+.secrets
+.env
+
+# Editors and OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+.ruff_cache/

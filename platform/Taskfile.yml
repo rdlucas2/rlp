@@ -1,0 +1,42 @@
+# Standard rlp verbs. The rlp CLI and the golden pipeline call these by name.
+version: "3"
+
+tasks:
+  setup:
+    desc: Install the locked dependencies into .venv
+    cmds:
+      - uv sync --locked
+
+  lint:
+    desc: Lint and check formatting with ruff
+    cmds:
+      - uv run --locked ruff check .
+      - uv run --locked ruff format --check .
+
+  test:
+    desc: Run the tests; write JUnit XML and Cobertura coverage to reports/
+    cmds:
+      - >-
+        uv run --locked pytest
+        --junitxml=reports/junit.xml
+        --cov --cov-report=xml:reports/coverage.xml --cov-report=term
+
+  build:
+    desc: Byte-compile the sources to catch syntax errors
+    cmds:
+      - uv run --locked python -m compileall -q src
+
+  package:
+    desc: Build the container image ($RLP_IMAGE when rlp runs it)
+    cmds:
+      - docker build -t "${RLP_IMAGE:-rlp-platform-platform:dev}" .
+
+  run:
+    desc: Start the service on $PORT (default 8000)
+    cmds:
+      - uv run --locked python -m rlp_platform
+
+  smoke:
+    desc: Check /healthz and /readyz of a running instance ($SMOKE_URL, default http://127.0.0.1:$PORT)
+    cmds:
+      - uv run --locked python -m rlp_platform.smoke

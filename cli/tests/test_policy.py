@@ -53,5 +53,15 @@ def test_dependency_directories_are_ignored(rlp, copy_fixture):
     assert rlp("policy", "check", str(repo)).code == 0
 
 
+def test_rego_sources_are_not_parsed_as_configuration(rlp, copy_fixture):
+    # conftest reads any file with "dockerfile" in its name as a Dockerfile, so a
+    # repo that ships Rego (rlp itself: policy/container/dockerfile.rego) failed.
+    repo = slice0_repo(copy_fixture)
+    rules = repo / "policy" / "container"
+    rules.mkdir(parents=True)
+    (rules / "dockerfile.rego").write_text("package rlp.container\n", encoding="utf-8")
+    assert rlp("policy", "check", str(repo)).code == 0
+
+
 def test_missing_directory_is_a_usage_error(rlp, tmp_path):
     assert rlp("policy", "check", str(tmp_path / "nope")).code == 2
