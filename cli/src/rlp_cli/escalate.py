@@ -152,6 +152,9 @@ def last_failing_gate(state: dict) -> tuple[int, dict] | None:
 def _iteration(it: dict) -> list[str]:
     agent = it["agent"]
     stat = it["diffStat"]
+    finished = "finished" if agent["ok"] else "did not finish"
+    over = ", over budget" if agent["overBudget"] else ""
+    tokens = f"{agent['tokens']['input']} input and {agent['tokens']['output']} output tokens"
     out = [
         f"### Iteration {it['number']}",
         "",
@@ -159,9 +162,7 @@ def _iteration(it: dict) -> list[str]:
         "",
         *_findings(it["findings"]),
         "",
-        f"**Agent.** {'finished' if agent['ok'] else 'did not finish'}"
-        f"{', over budget' if agent['overBudget'] else ''}; "
-        f"${agent['costUsd']:.2f}, {agent['tokens']['input']} input and {agent['tokens']['output']} output tokens.",
+        f"**Agent.** {finished}{over}; ${agent['costUsd']:.2f}, {tokens}.",
         "",
     ]
     summary = _truncate(agent["summary"], SUMMARY_LIMIT)
@@ -200,11 +201,19 @@ def render(state: dict, trigger: str = "", state_file: str = "") -> str:
     ]
     if state_file:
         rows.append(("State file", f"`{state_file}`"))
+    intro = (
+        f"The `{state['loop']}` remediation loop gave up on `{state['base']}` and needs a human. "
+        "Everything below comes from the loop's state file; nothing needs re-running to read it."
+    )
+    handover = (
+        f"Check out `{state['branch'] or state['base']}`, fix what the last failing gate reports, "
+        "and run the verify stages with `rlp pipeline run -s <stage>`. "
+        "Close this issue when the gate passes on the base branch."
+    )
     out = [
         marker(state),
         "",
-        f"The `{state['loop']}` remediation loop gave up on `{state['base']}` and needs a human. "
-        "Everything below comes from the loop's state file; nothing needs re-running to read it.",
+        intro,
         "",
         "| | |",
         "| --- | --- |",
@@ -230,9 +239,7 @@ def render(state: dict, trigger: str = "", state_file: str = "") -> str:
         "",
         "## Taking over",
         "",
-        f"Check out `{state['branch'] or state['base']}`, fix what the last failing gate reports, "
-        "and run the verify stages with `rlp pipeline run -s <stage>`. "
-        "Close this issue when the gate passes on the base branch.",
+        handover,
     ]
     return "\n".join(out) + "\n"
 
