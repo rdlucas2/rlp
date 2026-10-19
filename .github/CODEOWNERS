@@ -1,0 +1,38 @@
+# Gate files: a change to any of these needs Ryan's review (#73).
+#
+# This is the file-based layer of gate review. The other is the gate-review job
+# in the golden pipeline, which holds an agent-authored change the rlp.agent
+# rules flag until a human who is not the PR author approves its head commit.
+# The patterns cover every path RLP-A001 protects (policy/agent/agent.rego),
+# in this repo and in projects under it (platform/, test fixtures), so they are
+# unanchored. cli/tests/test_codeowners.py keeps the two in step.
+#
+# CODEOWNERS routes the review; it blocks a merge only once "Require review
+# from Code Owners" is on for main.
+
+# Policy bundle, workflows and CODEOWNERS itself
+policy/                     @rdlucas2
+**/.github/workflows/       @rdlucas2
+/.github/CODEOWNERS         @rdlucas2
+
+# Vulnerability exceptions
+**/.rlp/vex.yaml            @rdlucas2
+
+# Contracts and the standard verbs
+rlp.yaml                    @rdlucas2
+Taskfile.yml                @rdlucas2
+Taskfile.yaml               @rdlucas2
+taskfile.yml                @rdlucas2
+taskfile.yaml               @rdlucas2
+
+# Pre-commit, Semgrep, Trivy and coverage settings
+.pre-commit-config.yaml     @rdlucas2
+.semgrep.yml                @rdlucas2
+.semgrep.yaml               @rdlucas2
+.semgrepignore              @rdlucas2
+.semgrep/                   @rdlucas2
+trivy.yaml                  @rdlucas2
+trivy.yml                   @rdlucas2
+.trivyignore                @rdlucas2
+.trivyignore.yaml           @rdlucas2
+.coveragerc                 @rdlucas2
