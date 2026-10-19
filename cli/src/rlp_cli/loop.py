@@ -14,6 +14,11 @@ cap is hit:
 4. **Iterate** until the verify stages pass (`fixed`), or the iteration cap
    or the spend cap is reached (`escalated`).
 
+A kind can also stop a run for a human: its `preflight` hook escalates before
+the first agent call (for example, a fix that needs a major-version bump),
+and its `review` hook escalates a run whose verify stages passed but whose
+change a human must decide on.
+
 Work happens on a branch `rlp/loop/<kind>/<run-id>`, one commit per accepted
 attempt; the base branch is never committed to, and is checked out again when
 the run ends. Every iteration is recorded in `.rlp/loops/<kind>-<run-id>.json`,
@@ -23,9 +28,10 @@ Loops are off by default. A repo opts in with `loops.enabled: true` in
 rlp.yaml (optionally `loops.kinds`), and RLP_LOOPS=off in the environment
 turns every loop off whatever rlp.yaml says.
 
-Loop kinds register in KINDS. The quality kind (rlp_cli.quality, #48) is
-imported at the end of this module; a kind that has not registered yet (vuln,
-#49) reports that it is not implemented.
+Loop kinds register in KINDS. The quality kind (rlp_cli.quality, #48) and
+the vuln kind (rlp_cli.vuln, #49) are imported at the end of this module; a
+kind in KNOWN_KINDS that has not registered reports that it is not
+implemented.
 """
 
 from __future__ import annotations
@@ -71,6 +77,13 @@ class LoopKind:
     verify_stages: tuple[str, ...]  # golden pipeline stages that must pass
     allowed_paths: Callable[[Path, dict], list[str]]  # paths the agent may change, relative to the root
     build_prompt: Callable[[PromptInput], str] | None = None  # None: default_prompt
+    # (repo root, rlp.yaml, findings) -> why to escalate before the first agent call, or ""
+    preflight: Callable[[Path, dict, list[Finding]], str] | None = None
+    # (repo root, base branch) -> why a green run still needs a human, or ""; HEAD is the loop branch
+    review: Callable[[Path, str], str] | None = None
+    # Files (relative to the root) an attempt must leave byte-for-byte as they were, even when
+    # git ignores them and the provider can't see the change; a changed one is put back and the attempt thrown away.
+    guarded: tuple[str, ...] = ()
 
 
 @dataclass
@@ -289,6 +302,32 @@ def discard(root: Path, files: Sequence[str]) -> None:
             (root / rel).unlink(missing_ok=True)
 
 
+def snapshot_guarded(root: Path, paths: Sequence[str]) -> dict[str, bytes | None]:
+    """The current content of each guarded file (None: it doesn't exist)."""
+    out: dict[str, bytes | None] = {}
+    for rel in paths:
+        path = root / rel
+        out[rel] = path.read_bytes() if path.is_file() else None
+    return out
+
+
+def restore_guarded(root: Path, before: Mapping[str, bytes | None]) -> list[str]:
+    """Put back every guarded file the attempt changed; return their paths."""
+    tampered = []
+    for rel, content in before.items():
+        path = root / rel
+        now_ = path.read_bytes() if path.is_file() else None
+        if now_ == content:
+            continue
+        tampered.append(rel)
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+    return tampered
+
+
 # --- prompts ---
 
 
@@ -433,6 +472,12 @@ def run(root: Path, kind_name: str, opts: Options, stream=None) -> Report:
         state.branch = ""
         return finish("no-findings", f"the {kind_name} gate has nothing to fix")
 
+    if kind.preflight is not None:
+        why = kind.preflight(root, doc, findings)
+        if why:
+            state.branch = ""
+            return finish("escalated", why)
+
     ensure_clean(root)
     git(root, "switch", "--quiet", "-c", state.branch)
     save(root, state)
@@ -455,13 +500,16 @@ def iterate(root, kind: LoopKind, opts: Options, state: State, provider, build, 
         budget = spend.budget(spend.remaining)
         prompt = build(PromptInput(kind.name, number, opts.max_iterations, findings, gates, state.allowed_paths, rejected))
         opts.event(f"iteration {number}: asking {provider.name} to fix {len(findings)} finding(s) (budget ${budget.max_usd:.2f})")
+        before = snapshot_guarded(root, kind.guarded)
         result = provider.run(prompt, root, state.allowed_paths, budget)
+        tampered = restore_guarded(root, before)
         spend.charge(result)
         state.spent_usd, state.calls = spend.spent_usd, spend.calls
         record = Iteration(number, findings, result.as_dict(), {"files": 0, "insertions": 0, "deletions": 0}, [], "", "", spend.spent_usd)
-        if result.outside_allowed:
-            discard(root, result.changed_files)
-            record.rejected = rejected = f"it changed files outside the allowed paths: {', '.join(result.outside_allowed)}"
+        outside = list(dict.fromkeys([*result.outside_allowed, *tampered]))
+        if outside:
+            discard(root, [f for f in result.changed_files if f not in tampered])
+            record.rejected = rejected = f"it changed files outside the allowed paths: {', '.join(outside)}"
             opts.event(f"iteration {number}: attempt thrown away ({record.rejected})")
         else:
             rejected = ""
@@ -472,6 +520,9 @@ def iterate(root, kind: LoopKind, opts: Options, state: State, provider, build, 
         state.iterations.append(record)
         save(root, state)
         if not record.rejected and passed(gates):
+            why = kind.review(root, state.base) if kind.review is not None else ""
+            if why:
+                return finish("escalated", why)
             return finish("fixed", f"{', '.join(kind.verify_stages)} passed after {number} iteration(s)")
         if not record.rejected:
             findings = kind.discover(root, contract.load_repo(root))
@@ -491,4 +542,4 @@ def status(root: Path, env: Mapping[str, str] | None = None) -> list[dict]:
 
 
 # The concrete kinds register themselves on import; they need everything above.
-from rlp_cli import quality
+from rlp_cli import quality, vuln
