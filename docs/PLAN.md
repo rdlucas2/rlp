@@ -37,7 +37,7 @@ rlp is an open-source, agent-native internal developer platform: it takes a proj
 - **Contract over convention.** Nothing in rlp knows how to build, test or run an app. It reads the `rlp.yaml` contract and calls standard verbs. New languages arrive as templates, not platform code.
 - **Runs anywhere, identically.** rlp itself, every generated app (including Lambda zips) and every pipeline run locally and in AWS. Locally, everything runs in a container. Pipelines are testable with `act`.
 - **The CLI is the engine.** The `rlp` CLI executes verbs, validates contracts and drives the API. GitHub Actions workflows stay thin wrappers around `rlp` calls, so local runs and CI runs execute the same commands.
-- **Verifiers the agent can't edit.** Every agent loop is judged by gates it cannot weaken: quality config, suppressions and exception files are off-limits to agent-authored changes.
+   - **Verifiers the agent can't change without sign-off.** Every agent loop is judged by gates it cannot weaken on its own: an agent-authored change to quality config, suppressions, exception files, tests or policy is flagged as a warning and needs a human's approval before merge.
 - **Git is the source of truth for repos; Postgres for the platform.** Repo contracts live in repos. Project records, lifecycle and (later) users and roles live in rlp's Postgres store.
 - **Escalate, don't loop forever.** Every loop has an iteration cap, a spend cap and a named handoff to a human.
 - **Dogfood from day one.** rlp's own repo is project #1, scaffolded from an rlp template and gated by the rlp pipeline.
@@ -48,6 +48,7 @@ Decided so far; newest first. Reverse a decision by adding a new row, not by edi
 
 | Date | Decision | Why |
 | --- | --- | --- |
+| 2026-10-19 | Anti-cheat rules (`RLP-A00x`) warn instead of deny; agent gate changes need human sign-off before merge (#50, #73) | An agent can make a gate change an issue calls for, such as removing a flaky test, and a human still reviews every one |
 | 2026-10-18 | Remediation loops are opt-in per repo (`loops.enabled` in `rlp.yaml`), with an environment kill switch (`RLP_LOOPS=off`) | An agent that changes code and spends money runs only where a repo asked for it, and can be stopped without a commit |
 | 2026-10-16 | CLI in Python with Click; shipped as a PyPI wheel and as per-OS standalone binaries | Matches the platform stack; binaries run on Windows, macOS and Linux with no Python installed |
 | 2026-10-16 | OPA enforces contract presence and structure, alongside JSON Schema | See the note below the table |
