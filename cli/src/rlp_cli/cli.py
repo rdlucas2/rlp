@@ -16,7 +16,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, infra, loop, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, infra, loop, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -513,7 +513,7 @@ def make_loop_command(kind: str) -> click.Command:
 
 
 class LoopGroup(click.Group):
-    """`rlp loop status`, plus one subcommand per loop kind, read from the registry when called."""
+    """`rlp loop status` and `rlp loop escalate`, plus one subcommand per loop kind, read from the registry when called."""
 
     def list_commands(self, ctx: click.Context) -> list[str]:
         return sorted({*super().list_commands(ctx), *loop.kind_names()})
@@ -545,6 +545,41 @@ def loop_status(ctx: click.Context, root: Path) -> None:
         return
     for line in loop_status_lines(rows):
         click.echo(line)
+
+
+@loop_group.command(name="escalate")
+@click.argument("state_file", type=click.Path(path_type=Path, dir_okay=False))
+@click.option("--post", is_flag=True, help="Open the escalation issue on GitHub, or comment on the open one for the same loop and base branch.")
+@click.option("--repo", default=None, help="OWNER/NAME to post to. Default: $GITHUB_REPOSITORY.")
+@click.option("--trigger", default=None, help="Link to the run that started the loop. Default: this GitHub Actions run, when there is one.")
+@output_option
+@click.pass_context
+def loop_escalate(ctx: click.Context, state_file: Path, post: bool, repo: str | None, trigger: str | None) -> None:
+    """Render the escalation issue for a loop that gave up, from its STATE_FILE.
+
+    Without --post, prints the issue's Markdown. With --post, opens the issue
+    (labels needs:human, area:agent and loop:<kind>) or, when one is already
+    open for the same loop kind and base branch, comments on it. Posting reads
+    the token from GH_TOKEN, else GITHUB_TOKEN.
+    """
+    json_mode = ctx.obj["output"] == "json"
+    try:
+        state = escalate.load_state(state_file)
+        link = escalate.trigger_url() if trigger is None else trigger
+        shown = state_file.as_posix()
+        payload = {"ok": True, "title": escalate.title(state), "labels": escalate.labels(state), "body": escalate.render(state, link, shown)}
+        if post:
+            target = escalate.repo_from_env(repo)
+            posted = escalate.post(escalate.client_from_env(), target, state, link, shown)
+            payload |= {"repo": target, **posted.as_dict()}
+    except escalate.EscalationError as err:
+        fail(ctx, str(err))
+    if json_mode:
+        emit_json(payload)
+    elif post:
+        click.echo(f"{posted.action} {target}#{posted.number}: {posted.url}")
+    else:
+        click.echo(payload["body"], nl=False)
 
 
 @cli.group(name="secrets")
