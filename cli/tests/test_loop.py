@@ -18,7 +18,7 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
-from rlp_cli import agent, loop, resources
+from rlp_cli import agent, loop, loop_summary, resources
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 LINT = f'"{Path(sys.executable).as_posix()}" -c "import sys; sys.exit(0 if \'fixed\' in open(\'src/app.py\').read() else 1)"'
@@ -126,6 +126,32 @@ def test_fixed_on_iteration_two_on_its_own_branch(tmp_path, kind, fake):
     assert git(repo, "show", f"{branch}:src/app.py") == "fixed"
     assert git(repo, "rev-list", "--count", f"main..{branch}") == "2"
     assert state["iterations"][1]["commit"] == git(repo, "rev-parse", branch)
+
+
+def test_each_iteration_records_findings_after_and_duration(tmp_path, kind, fake):
+    repo = make_repo(tmp_path / "repo", ENABLED)
+    fake.steps = [
+        agent.FakeStep(files={"src/app.py": "fixed\n", "policy/gate.rego": "package gate\n# weakened\n"}),
+        *steps("still broken\n", "fixed\n"),
+    ]
+    report = run(repo, max_iterations=3, max_spend_usd=5)
+    assert report.outcome == "fixed"
+    iterations = validate_state(repo / report.state_file)["iterations"]
+    # thrown away: as many as before; still red: rediscovered; green: none left
+    assert [(len(i["findings"]), i["findingsAfter"]) for i in iterations] == [(1, 1), (1, 1), (1, 0)]
+    assert all(i["durationSeconds"] >= 0 for i in iterations)
+
+
+def test_summary_of_a_real_run_matches_its_state_file(tmp_path, kind, fake):
+    repo = make_repo(tmp_path / "repo", ENABLED)
+    fake.steps = steps("still broken\n", "fixed\n", cost=0.125)
+    report = run(repo, max_iterations=3, max_spend_usd=5)
+    state = validate_state(repo / report.state_file)
+    body = loop_summary.render(state)
+    assert "## rlp loop quality: fixed" in body
+    assert "| 1 | 1 | 1 | lint failed | $0.1250 |" in body and "| 2 | 1 | 0 | lint passed | $0.1250 |" in body
+    assert "**Total spend:** $0.2500 of $5.0000 cap" in body
+    assert loop_summary.total_spend(state) == pytest.approx(state["spend"]["spentUsd"])
 
 
 def test_never_fixed_stops_at_the_iteration_cap(tmp_path, kind, fake):

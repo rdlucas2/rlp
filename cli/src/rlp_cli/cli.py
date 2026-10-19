@@ -16,7 +16,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, infra, loop, loop_pr, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, infra, loop, loop_pr, loop_summary, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -513,7 +513,7 @@ def make_loop_command(kind: str) -> click.Command:
 
 
 class LoopGroup(click.Group):
-    """`rlp loop status`, `rlp loop escalate` and `rlp loop pr`, plus one subcommand per loop kind, read from the registry when called."""
+    """`rlp loop status`, `rlp loop escalate`, `rlp loop pr` and `rlp loop summary`, plus one subcommand per loop kind, read from the registry when called."""
 
     def list_commands(self, ctx: click.Context) -> list[str]:
         return sorted({*super().list_commands(ctx), *loop.kind_names()})
@@ -615,6 +615,29 @@ def loop_pull_request(ctx: click.Context, state_file: Path, post: bool, repo: st
         click.echo(f"{posted.action} {target}#{posted.number}: {posted.url}")
     else:
         click.echo(payload["body"], nl=False)
+
+
+@loop_group.command(name="summary")
+@click.argument("state_file", type=click.Path(path_type=Path, dir_okay=False))
+@output_option
+@click.pass_context
+def loop_summary_command(ctx: click.Context, state_file: Path) -> None:
+    """Render a loop run's telemetry from its STATE_FILE, for the job summary.
+
+    Prints a Markdown table, one row per iteration (findings before and after,
+    gate results, cost, duration), then the outcome and the total spend. Loop
+    workflows append it to $GITHUB_STEP_SUMMARY. Works for any outcome.
+    """
+    try:
+        state = escalate.read_state(state_file)
+    except escalate.EscalationError as err:
+        fail(ctx, str(err))
+    body = loop_summary.render(state)
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "loop": state["loop"], "runId": state["runId"], "outcome": state["outcome"],
+                   "iterations": len(state["iterations"]), "totalSpendUsd": round(loop_summary.total_spend(state), 6), "body": body})
+    else:
+        click.echo(body, nl=False)
 
 
 @cli.group(name="secrets")
