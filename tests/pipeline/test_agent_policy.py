@@ -212,3 +212,97 @@ def test_project_in_a_subdirectory_is_judged_on_its_own_files(tmp_path):
     code, stage = policy_stage(project, base, AGENT)
     assert code == 0, stage
     assert rules(stage) == {"RLP-A002"}
+
+
+# --- The second policy run, after coverage (#72) ---
+#
+# golden.yml runs the policy stage again once the test and coverage stages have
+# written their results, with RLP_BASE_RESULTS pointing at the base commit's
+# results.json, so RLP-A005 and RLP-A006 can compare the two.
+
+
+def write_head_results(repo: Path, tests: int, percent: float) -> None:
+    path = repo / ".rlp" / "pipeline" / "results.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stages = [{"detail": "", "seconds": 0.0, "components": {"api": "passed"}, **r} for r in results(tests, percent)]
+    path.write_text(json.dumps(stages), encoding="utf-8")
+
+
+def policy_after_coverage(repo: Path, base: str, who: dict, base_results: Path | None) -> tuple[int, dict]:
+    """The policy stage as golden.yml reruns it: no --reset, so the test and coverage results stay."""
+    extra = {"RLP_BASELINE": base, **who}
+    if base_results is not None:
+        extra["RLP_BASE_RESULTS"] = str(base_results)
+    proc = rlp(repo, "pipeline", "run", "--stage", "policy", "-o", "json", extra_env=extra)
+    (stage,) = json.loads(proc.stdout)["stages"]
+    return proc.returncode, stage
+
+
+@pytest.fixture
+def base_results(tmp_path: Path) -> Path:
+    path = tmp_path / "base" / "results.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(results(5, 92.0)), encoding="utf-8")
+    return path
+
+
+def test_rerun_flags_a_deleted_test(repo, base_results):
+    base = head(repo)
+    remove_a_test(repo)
+    write_head_results(repo, 4, 92.0)
+    code, stage = policy_after_coverage(repo, base, AGENT, base_results)
+    assert code == 0, stage
+    assert stage["status"] == "passed"
+    assert rules(stage) == {"RLP-A005", "RLP-A007"}
+    assert "compared with the base results" in stage["detail"]
+
+
+def test_rerun_flags_lower_coverage_without_test_changes(repo, base_results):
+    base = head(repo)
+    src = next((repo / "src").rglob("*.py"))
+    src.write_text(src.read_text(encoding="utf-8") + "\n\ndef unused():\n    return 1\n", encoding="utf-8")
+    commit(repo, "add uncovered code")
+    write_head_results(repo, 5, 88.5)
+    code, stage = policy_after_coverage(repo, base, AGENT, base_results)
+    assert code == 0, stage
+    assert rules(stage) == {"RLP-A006"}
+
+
+def test_rerun_keeps_the_other_stages_results(repo, base_results):
+    base = head(repo)
+    write_head_results(repo, 4, 88.5)
+    policy_after_coverage(repo, base, AGENT, base_results)
+    recorded = json.loads((repo / ".rlp" / "pipeline" / "results.json").read_text(encoding="utf-8"))
+    assert [r["stage"] for r in recorded] == ["policy", "test", "coverage"]
+    out = rlp(repo, "pipeline", "summary").stdout
+    assert "- [RLP-A005] " in out
+    assert "- [RLP-A006] " in out
+
+
+def test_rerun_passes_the_same_change_from_a_human(repo, base_results):
+    base = head(repo)
+    remove_a_test(repo)
+    write_head_results(repo, 4, 88.5)
+    code, stage = policy_after_coverage(repo, base, HUMAN, base_results)
+    assert code == 0, stage
+    assert rules(stage) == set()
+
+
+@pytest.mark.parametrize("missing", ["unset", "no-file"])
+def test_rerun_without_base_results_passes_and_says_so(repo, tmp_path, missing):
+    """A first run: no cached results for the base commit."""
+    base = head(repo)
+    write_head_results(repo, 4, 88.5)
+    base_results = None if missing == "unset" else tmp_path / "absent" / "results.json"
+    code, stage = policy_after_coverage(repo, base, AGENT, base_results)
+    assert code == 0, stage
+    assert stage["status"] == "passed"
+    assert rules(stage) == set()
+    assert "no base results ($RLP_BASE_RESULTS), so the test-count and coverage rules were skipped" in stage["detail"]
+
+
+def test_first_policy_run_says_nothing_about_results(repo, base_results):
+    """Before the test stage there are no head results; the rerun after coverage compares them."""
+    code, stage = policy_stage(repo, head(repo), AGENT)
+    assert code == 0, stage
+    assert "base results" not in stage["detail"]

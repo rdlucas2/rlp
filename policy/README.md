@@ -93,7 +93,7 @@ The rules don't read repo files. `rlp policy check` and the policy stage add one
 | `contracts` | `rlp.yaml` and Taskfiles in the diff, parsed before and after |
 | `results` | Test counts and line coverage per component from a base and a head `results.json`: `--base-results` or `$RLP_BASE_RESULTS`, and `--head-results` (default `.rlp/pipeline/results.json`) |
 
-Without a baseline there is no diff, so only the results rules can fire. The policy stage runs before the test stage, so in the golden pipeline RLP-A007 guards the test count from the diff; RLP-A005 and RLP-A006 fire when `rlp policy check` is given both results files.
+Without a baseline there is no diff, so only the results rules can fire. The policy stage runs before the test stage, so at first RLP-A007 guards the test count from the diff. On pull requests the golden pipeline runs the policy stage again after the coverage stage, with `$RLP_BASE_RESULTS` set to the base commit's `results.json` (kept in the Actions cache by each push to the default branch), so RLP-A005 and RLP-A006 compare the two and their warnings join `data.gate_changes`. With no base results, a first run for example, that run passes and its detail says the two rules were skipped. See [docs/pipeline.md](../docs/pipeline.md#test-count-and-coverage-rules).
 
 ## VEX exceptions
 
