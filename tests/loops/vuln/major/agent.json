@@ -1,0 +1,9 @@
+[
+  {
+    "summary": "Bumped pyjwt to 2.4.0 (never called: the loop escalates first).",
+    "costUsd": 0.1,
+    "files": {
+      "requirements.txt": "pyjwt==2.4.0\n"
+    }
+  }
+]

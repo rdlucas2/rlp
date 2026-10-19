@@ -1,0 +1,9 @@
+[
+  {
+    "summary": "Bumped cryptography from 42.0.0 to 42.0.4 in requirements.txt.",
+    "costUsd": 0.09,
+    "files": {
+      "requirements.txt": "cryptography==42.0.4\n"
+    }
+  }
+]

@@ -1,0 +1,19 @@
+# A vulnerable pinned Python package with a patch release that fixes it.
+description: requirements.txt pins cryptography 42.0.0 (CVE-2024-26130, HIGH); 42.0.4 fixes it.
+expect:
+  outcome: fixed
+  iterations: 1
+# What the fake trivy reports while the pattern is in the file (tests only).
+trivy:
+  - scan: fs
+    file: requirements.txt
+    pattern: cryptography==42.0.0
+    target: requirements.txt
+    class: lang-pkgs
+    vulnerability:
+      VulnerabilityID: CVE-2024-26130
+      PkgName: cryptography
+      InstalledVersion: 42.0.0
+      FixedVersion: 42.0.4
+      Severity: HIGH
+      Title: "cryptography: NULL pointer dereference with pkcs12.serialize_key_and_certificates"

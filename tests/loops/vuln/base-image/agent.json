@@ -1,0 +1,9 @@
+[
+  {
+    "summary": "Moved the base image from python:3.13.0-slim to python:3.13.9-slim.",
+    "costUsd": 0.11,
+    "files": {
+      "Dockerfile": "FROM python:3.13.9-slim\n# The app needs no installer at runtime. Removing pip and setuptools drops them\n# and the libraries pip vendors from the image, so the trivy gate scans only\n# what the app ships.\nRUN python -m pip uninstall --yes --no-input pip setuptools\nWORKDIR /app\nCOPY src/ /app/\nUSER 10001\nCMD [\"python\", \"-m\", \"hello\"]\n"
+    }
+  }
+]
