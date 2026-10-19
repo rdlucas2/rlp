@@ -63,12 +63,12 @@ def render(state: dict) -> str:
     """The job summary for one loop run, as Markdown."""
     limits = state["limits"]
     total = total_spend(state)
+    branch = f", loop branch `{state['branch']}`" if state["branch"] else ""
     run = f"`{state['runId']}`, {state['startedAt']} to {state['finishedAt'] or 'unfinished'}"
     out = [
         f"## rlp loop {state['loop']}: {state['outcome']}",
         "",
-        f"Base `{state['base']}`" + (f", loop branch `{state['branch']}`" if state["branch"] else "")
-        + f", provider `{state['provider']}`, run {run}.",
+        f"Base `{state['base']}`{branch}, provider `{state['provider']}`, run {run}.",
         "",
     ]
     if state["iterations"]:
@@ -77,17 +77,16 @@ def render(state: dict) -> str:
             "| ---: | ---: | ---: | --- | ---: | ---: |",
         ]
         for n, it in enumerate(state["iterations"]):
-            out.append(
-                f"| {it['number']} | {len(it['findings'])} | {findings_after(state, n)} | {gates(it)} "
-                f"| {usd(it['agent']['costUsd'])} | {duration(it.get('durationSeconds'))} |"
-            )
+            cells = [str(it["number"]), str(len(it["findings"])), findings_after(state, n), gates(it),
+                     usd(it["agent"]["costUsd"]), duration(it.get("durationSeconds"))]
+            out.append("| " + " | ".join(cells) + " |")
     else:
         out.append(f"No iterations: discovery found {len(state['findings'])} finding(s) and no agent was called.")
+    count = f"{len(state['iterations'])} of {limits['maxIterations']} iteration(s)"
     out += [
         "",
         f"**Outcome:** {state['outcome']}: {escalate._cell(state['reason']) or 'no reason recorded'}",
         "",
-        f"**Total spend:** {usd(total)} of {usd(limits['maxSpendUsd'])} cap, over {len(state['iterations'])} of "
-        f"{limits['maxIterations']} iteration(s).",
+        f"**Total spend:** {usd(total)} of {usd(limits['maxSpendUsd'])} cap, over {count}.",
     ]
     return "\n".join(out) + "\n"
