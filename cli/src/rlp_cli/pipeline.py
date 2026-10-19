@@ -100,11 +100,18 @@ def stage_validate(ctx: Context) -> StageResult:
 
 
 def stage_policy(ctx: Context) -> StageResult:
-    violations = policy.check(ctx.root, change=change.build(ctx.root))
-    if violations:
-        rules = ", ".join(sorted({v.rule for v in violations}))
-        return StageResult("policy", "failed", f"{len(violations)} violation(s): {rules}", data={"violations": [v.as_dict() for v in violations]})
-    return StageResult("policy", "passed", "no violations")
+    report = policy.check(ctx.root, change=change.build(ctx.root))
+    data: dict = {}
+    notes = []
+    if report.warnings:
+        # Agent-authored gate changes (rlp.agent): they don't fail the stage, but a human reviews each one (#73).
+        data["gate_changes"] = [w.as_dict() for w in report.warnings]
+        notes.append(f"{len(report.warnings)} gate change(s) needing review: " + ", ".join(sorted({w.rule for w in report.warnings})))
+    if report.violations:
+        data["violations"] = [v.as_dict() for v in report.violations]
+        rules = ", ".join(sorted({v.rule for v in report.violations}))
+        return StageResult("policy", "failed", "; ".join([f"{len(report.violations)} violation(s): {rules}", *notes]), data=data)
+    return StageResult("policy", "passed", "; ".join(["no violations", *notes]), data=data)
 
 
 def run_verb(ctx: Context, verb: str) -> StageResult:
@@ -212,7 +219,7 @@ def stage_terraform(ctx: Context) -> StageResult:
     shown = ", ".join(f"{n} to {action}" for action, n in counts.items() if n) or "no changes"
     per = {c: "passed" for c in stack.components} | {c: "skipped" for c in stack.skipped}
     data = {"env": ctx.deploy_env, "changes": counts, "plan": stack.plan_json.relative_to(ctx.root).as_posix()}
-    violations = policy.check(stack.plan_json.parent, ("rlp.terraform",))
+    violations = policy.check(stack.plan_json.parent, ("rlp.terraform",)).violations
     if violations:
         data["violations"] = [v.as_dict() for v in violations]
         rules = ", ".join(sorted({v.rule for v in violations}))
@@ -343,4 +350,8 @@ def summary(results: dict[str, dict]) -> str:
         for comp in components:
             cells = [ICONS.get(per_component[s].get(comp, ""), "–") for s in stage_cols]
             lines.append(f"| {comp} | " + " | ".join(cells) + " |")
+    gate_changes = ((results.get("policy") or {}).get("data") or {}).get("gate_changes") or []
+    if gate_changes:
+        lines += ["", "### Gate changes needing review", "", "An agent-authored change touches a gate. A human reviews each one before merge.", ""]
+        lines += [f"- {g['message']}" for g in gate_changes]
     return "\n".join(lines) + "\n"

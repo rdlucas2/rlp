@@ -119,21 +119,29 @@ def policy_check(ctx: click.Context, path: Path, namespaces: tuple[str, ...], ba
 
     The rlp.agent rules also judge the change since the baseline commit (see
     policy/README.md): who authored it, the files it touched, and test counts
-    and coverage before and after.
+    and coverage before and after. They warn rather than fail: an agent-authored
+    gate change is printed as a warning for a human to review, and the check
+    exits 0 when warnings are its only findings.
     """
     try:
         doc = change.build(path, base_results, head_results) if path.is_dir() else None
-        violations = policy.check(path, namespaces, doc)
+        report = policy.check(path, namespaces, doc)
     except (policy.PolicyError, change.ChangeError, baseline.BaselineError) as err:
         fail(ctx, str(err))
+    violations, warnings = report.violations, report.warnings
     if ctx.obj["output"] == "json":
-        emit_json({"ok": not violations, "violations": [v.as_dict() for v in violations]})
-    elif violations:
-        for v in violations:
-            click.echo(v.message)
-        click.echo(f"{len(violations)} violation(s)")
+        emit_json({"ok": not violations, "violations": [v.as_dict() for v in violations], "warnings": [w.as_dict() for w in warnings]})
     else:
-        click.echo("policy: no violations")
+        for w in warnings:
+            click.echo(f"warning: {w.message}")
+        if warnings:
+            click.echo(f"{len(warnings)} warning(s): gate changes needing review")
+        if violations:
+            for v in violations:
+                click.echo(v.message)
+            click.echo(f"{len(violations)} violation(s)")
+        else:
+            click.echo("policy: no violations")
     ctx.exit(1 if violations else 0)
 
 

@@ -35,6 +35,31 @@ class Violation:
         return {"rule": self.rule, "file": self.file, "field": self.field, "message": self.message, "namespace": self.namespace}
 
 
+@dataclass(frozen=True)
+class Report:
+    """What conftest found: violations (deny rules) fail a check; warnings (warn rules) don't."""
+
+    violations: list[Violation]
+    warnings: list[Violation]
+
+
+def findings(result: dict, key: str) -> list[Violation]:
+    out = []
+    namespace = result.get("namespace", "")
+    for finding in result.get(key) or []:
+        msg = finding["msg"]
+        m = MESSAGE.match(msg)
+        if m:
+            out.append(Violation(m["rule"], m["file"], m["field"], msg, namespace))
+        else:
+            out.append(Violation("", "", "", msg, namespace))
+    return out
+
+
+def ordered(items: list[Violation]) -> list[Violation]:
+    return sorted(items, key=lambda v: (v.rule, v.file, v.field, v.message))
+
+
 def conftest_args(conftest: Path, bundle: Path, namespaces: tuple[str, ...], extra: tuple[Path, ...] = ()) -> list[str]:
     args = [str(conftest), "test", "--combine", "--no-color", "--output", "json", "--ignore", IGNORE]
     args += ["--policy", str(bundle), "--data", str(bundle)]
@@ -46,28 +71,22 @@ def conftest_args(conftest: Path, bundle: Path, namespaces: tuple[str, ...], ext
     return [*args, ".", *(str(p) for p in extra)]
 
 
-def parse(stdout: str) -> list[Violation]:
+def parse(stdout: str) -> Report:
     try:
         report = json.loads(stdout)
     except json.JSONDecodeError as err:
         raise PolicyError(f"conftest returned non-JSON output: {stdout[:500]}") from err
-    violations = []
+    violations, warnings = [], []
     for result in report:
         if result.get("exceptions"):
             raise PolicyError(f"conftest reported exceptions: {result['exceptions']}")
-        for failure in result.get("failures") or []:
-            msg = failure["msg"]
-            m = MESSAGE.match(msg)
-            namespace = result.get("namespace", "")
-            if m:
-                violations.append(Violation(m["rule"], m["file"], m["field"], msg, namespace))
-            else:
-                violations.append(Violation("", "", "", msg, namespace))
-    return sorted(violations, key=lambda v: (v.rule, v.file, v.field, v.message))
+        violations += findings(result, "failures")
+        warnings += findings(result, "warnings")
+    return Report(ordered(violations), ordered(warnings))
 
 
-def check(repo: Path, namespaces: tuple[str, ...] = (), change: dict | None = None) -> list[Violation]:
-    """Violations in the repo. change is the rlp.agent input (change.build); it is checked alongside the repo's files."""
+def check(repo: Path, namespaces: tuple[str, ...] = (), change: dict | None = None) -> Report:
+    """Violations and warnings in the repo. change is the rlp.agent input (change.build); it is checked alongside the repo's files."""
     if not repo.is_dir():
         raise PolicyError(f"{repo} is not a directory")
     try:
