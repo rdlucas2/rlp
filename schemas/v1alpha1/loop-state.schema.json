@@ -224,6 +224,16 @@
           "description": "Spend so far, after this iteration.",
           "type": "number",
           "minimum": 0
+        },
+        "findingsAfter": {
+          "description": "Findings left after this iteration: zero when the verify stages passed, the rediscovered count after a failed verification, the count it started with when the attempt was thrown away. Absent in state files from before rlp recorded it.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "durationSeconds": {
+          "description": "Wall-clock time of the iteration (agent call and verification), in seconds. Absent in state files from before rlp recorded it.",
+          "type": "number",
+          "minimum": 0
         }
       }
     },

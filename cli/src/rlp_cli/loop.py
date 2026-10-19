@@ -40,6 +40,7 @@ import json
 import os
 import secrets
 import subprocess
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -161,9 +162,11 @@ class Iteration:
     rejected: str
     commit: str
     spent_usd: float
+    findings_after: int | None = None
+    duration_seconds: float | None = None
 
     def as_dict(self) -> dict:
-        return {
+        out = {
             "number": self.number,
             "findings": self.findings,
             "agent": self.agent,
@@ -173,6 +176,11 @@ class Iteration:
             "commit": self.commit,
             "spentUsd": round(self.spent_usd, 6),
         }
+        if self.findings_after is not None:
+            out["findingsAfter"] = self.findings_after
+        if self.duration_seconds is not None:
+            out["durationSeconds"] = round(self.duration_seconds, 3)
+        return out
 
 
 @dataclass
@@ -499,6 +507,7 @@ def iterate(root, kind: LoopKind, opts: Options, state: State, provider, build, 
             return finish("escalated", f"spend cap of ${spend.cap_usd:.2f} reached after {number - 1} iteration(s)")
         budget = spend.budget(spend.remaining)
         prompt = build(PromptInput(kind.name, number, opts.max_iterations, findings, gates, state.allowed_paths, rejected))
+        started = time.monotonic()
         opts.event(f"iteration {number}: asking {provider.name} to fix {len(findings)} finding(s) (budget ${budget.max_usd:.2f})")
         before = snapshot_guarded(root, kind.guarded)
         result = provider.run(prompt, root, state.allowed_paths, budget)
@@ -517,15 +526,20 @@ def iterate(root, kind: LoopKind, opts: Options, state: State, provider, build, 
             record.commit = commit(root, f"fix({kind.name}): rlp loop iteration {number}\n\n{result.summary}")
             gates = record.gates = verify(root, kind.verify_stages, stream)
             opts.event(f"iteration {number}: " + ", ".join(f"{g['stage']} {g['status']}" for g in gates))
+        green = not record.rejected and passed(gates)
+        record.duration_seconds = time.monotonic() - started
         state.iterations.append(record)
         save(root, state)
-        if not record.rejected and passed(gates):
+        # Rediscover after a kept attempt that is still red; the iteration is already on disk if this fails.
+        if not record.rejected and not green:
+            findings = kind.discover(root, contract.load_repo(root))
+        record.findings_after = 0 if green else len(findings)
+        save(root, state)
+        if green:
             why = kind.review(root, state.base) if kind.review is not None else ""
             if why:
                 return finish("escalated", why)
             return finish("fixed", f"{', '.join(kind.verify_stages)} passed after {number} iteration(s)")
-        if not record.rejected:
-            findings = kind.discover(root, contract.load_repo(root))
     if spend.exhausted:
         return finish("escalated", f"spend cap of ${spend.cap_usd:.2f} reached after {opts.max_iterations} iteration(s)")
     return finish("escalated", f"iteration cap of {opts.max_iterations} reached; the gate still fails")
