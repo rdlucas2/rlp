@@ -381,14 +381,19 @@ def _fence(text: str) -> str:
     return f"{fence}text\n{text.rstrip()}\n{fence}"
 
 
+UPGRADE_RULE = " ".join([
+    "- Upgrade each vulnerable package to a release that fixes it, within its current major version.",
+    "For a package that came with a container's base image, move the Dockerfile's FROM line to a newer tag of the same image and major version.",
+])
+
+
 def build_prompt(p: loop.PromptInput) -> str:
     lines = [
         f"You are fixing vulnerabilities that rlp's trivy gate found in this repository's dependencies and container images (attempt {p.iteration} of {p.max_iterations}).",
         "",
         "Rules:",
         f"- Change only these files: {', '.join(p.allowed_paths)}. Changes anywhere else are thrown away.",
-        "- Upgrade each vulnerable package to a release that fixes it, within its current major version. "
-        "For a package that came with a container's base image, move the Dockerfile's FROM line to a newer tag of the same image and major version.",
+        UPGRADE_RULE,
         "- Never add an exception: .rlp/vex.yaml, .trivyignore and Trivy settings are off limits. Never weaken a gate.",
         "- Change only the pins the findings need. When a lockfile pins the same package, update its entry to match.",
         "- You can't run commands. When you finish, the loop reruns setup, test, package and trivy itself.",
