@@ -49,7 +49,7 @@ Both caps must be positive.
 | `escalated` | 1 | The iteration cap or the spend cap was reached with the gate still failing |
 | `error` | 2 | The loop couldn't start or continue: bad options, a dirty work tree, missing credentials, a git or agent failure |
 
-Opening the PR or the escalation issue is a separate step (#52), done as the loop's [agent identity](#agent-identity).
+Opening the PR is a separate step, done as the loop's [agent identity](#agent-identity). An `escalated` or `error` run hands over to a human through an [escalation issue](#escalation).
 
 ### State
 
@@ -65,6 +65,26 @@ A kind is a `rlp_cli.loop.LoopKind` registered with `loop.register()`:
 - `build_prompt(PromptInput)` is optional; without it the runner's default prompt lists the findings and the failing gate output.
 
 Add the kind's name to `KNOWN_KINDS` in `loop.py` and to the `loops.kinds` enum in `schemas/v1alpha1/repo.schema.json`.
+
+## Escalation
+
+Every loop ends in a green PR or in an escalation issue: one GitHub issue a human can take over from without re-running anything. `rlp loop escalate` renders it from the run's state file:
+
+```sh
+rlp loop escalate .rlp/loops/quality-<run-id>.json           # print the Markdown
+rlp loop escalate .rlp/loops/quality-<run-id>.json --post    # open the issue, or comment on the open one
+```
+
+The issue has:
+
+- the loop kind, outcome and reason, base and loop branch, provider, iterations used and spend against the caps
+- the trigger: the GitHub Actions run that started the loop, read from `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY` and `GITHUB_RUN_ID` (or `--trigger URL`)
+- the last failing gate's output, cut to its last 4,000 characters
+- for each iteration: the findings its prompt was built from, the agent's summary, cost and tokens, the changed files, the diff stat and commit (or why the attempt was thrown away), and the gate results
+
+It is labelled `needs:human`, `area:agent` and `loop:<kind>`. There is **one open escalation per loop kind and base branch**: the body carries a hidden marker naming both, and a repeat escalation for the same pair adds a comment ("Escalated again: run ...") with the new run's details instead of opening another issue. Closing the issue lets the next escalation open a fresh one.
+
+Only `escalated` and `error` runs can be escalated; any other outcome exits 2. `--post` calls the GitHub REST API with `GH_TOKEN` (else `GITHUB_TOKEN`), against `GITHUB_API_URL` when it is set, in the repo named by `--repo OWNER/NAME` (else `GITHUB_REPOSITORY`). In a loop workflow, pass the [agent identity](#agent-identity)'s token so the issue is opened by `localrlp[bot]`. `--output json` prints the title, labels and body, plus the issue number, URL and whether it was `opened` or `commented` when posting.
 
 ## Agent identity
 
