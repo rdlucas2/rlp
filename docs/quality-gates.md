@@ -9,6 +9,7 @@ These scanners gate every rlp repo inside the [golden pipeline](pipeline.md). No
 | coverage (new code) | `coverage` | lines changed since the baseline are covered below the declared minimum | `results.json`, with uncovered lines per file |
 | Semgrep | `sast` | an ERROR or WARNING finding is new since the baseline | `reports/semgrep.{json,sarif}` |
 | Trivy | `trivy` | a vulnerability at HIGH or above has a fix and no unexpired VEX exception | `reports/trivy-fs.{json,sarif}`, `reports/trivy-image-<component>.{json,sarif}` |
+| gate review | `gate-review` job | an agent-authored change touches a gate (`data.gate_changes`) and has no approval on its head commit from a human who is not the PR author | job summary |
 | SonarQube (optional) | `sonar` | the Sonar quality gate fails; skipped without `SONAR_TOKEN`, and never run in CI | your SonarQube dashboard |
 
 Report paths are relative to `.rlp/pipeline/`. The golden workflow uploads every SARIF file to GitHub code scanning, each with its own category, and attaches the reports to the `rlp-gate-results` artifact.
@@ -79,6 +80,22 @@ exceptions:
 - An expired exception stops covering its CVE, and the policy stage fails on it (`RLP-L005`).
 - The policy stage also fails on an exception without a reason (`RLP-L003`) or without a valid expiry (`RLP-L004`).
 - Agent-authored changes may not add or extend exceptions.
+
+## Gate review
+
+The `rlp.agent` rules ([policy/README.md](../policy/README.md#agent-authored-changes)) flag an agent-authored pull request that changes a gate: a protected gate file, the `quality` block, the test verb, a new suppression, fewer tests or lower coverage. Agents may make such a change when the work calls for it, such as removing a flaky test, but a human signs off on each one (decided 2026-10-18, #73). Two layers enforce that:
+
+1. **The `gate-review` job** in `golden.yml` runs `rlp pipeline gate-review` on pull requests after the gates job, reading the policy stage's `data.gate_changes` from the `rlp-gate-results` artifact.
+   - No gate changes: it passes, with no review needed.
+   - Gate changes: it passes only when the pull request has an approving review **on its current head commit** from someone who is neither the PR author nor an agent account (`agent_authors` in `policy/platform/data.yaml`, or any bot). Each reviewer counts by their latest approve, request-changes or dismissal; comment-only reviews don't change it. A new push moves the head, so the check fails again until someone re-approves.
+   - Missing policy results, a pull request it can't identify, or an API error fail the check, so it never passes by accident.
+
+   The job summary lists each gate change and any approval that didn't count, with why. Callers trigger on `pull_request_review` (`submitted`, `dismissed`) as well as `pull_request`, so a review re-runs the pipeline and the check. They also trigger on `pull_request` `labeled` and `unlabeled`, because the `agent:authored` label decides whether the rules apply and a PR is often labelled after it opens. And they grant `pull-requests: read` so the job can list reviews.
+2. **CODEOWNERS.** `.github/CODEOWNERS` makes Ryan the owner of every path RLP-A001 protects, plus `rlp.yaml`, the Taskfiles and CODEOWNERS itself. `cli/tests/test_codeowners.py` checks it against the rule.
+
+Neither blocks a merge until branch protection says so: `gate-review` must be a required check on `main`, and "Require review from Code Owners" must be on. Both are repository settings that Ryan changes.
+
+Locally, `rlp pipeline gate-review` reads `.rlp/pipeline/results.json`; with gate changes it also needs the pull request (`--repo`, `--pr`, `--head-sha`, `--author`) and `GH_TOKEN`.
 
 ## gitleaks
 

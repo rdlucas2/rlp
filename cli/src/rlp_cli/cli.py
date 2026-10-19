@@ -16,7 +16,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, infra, loop, loop_pr, loop_summary, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, gate_review, infra, loop, loop_pr, loop_summary, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -754,6 +754,36 @@ def pipeline_summary(ctx: click.Context, root: Path) -> None:
         emit_json({"ok": not failed, "stages": list(results.values())})
         return
     click.echo(pipeline.summary(results), nl=False)
+
+
+@pipeline_group.command(name="gate-review")
+@click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+@click.option("--results", "results_file", type=click.Path(path_type=Path, dir_okay=False), default=None, help="results.json to read. Default: .rlp/pipeline/results.json under --path.")
+@click.option("--repo", default="", help="OWNER/NAME of the pull request. Default: from the GitHub event.")
+@click.option("--pr", "number", type=click.IntRange(min=1), default=None, help="Pull request number. Default: from the GitHub event.")
+@click.option("--head-sha", default="", help="The PR's head commit. Default: from the GitHub event.")
+@click.option("--author", default="", help="The PR author's login. Default: from the GitHub event.")
+@output_option
+@click.pass_context
+def pipeline_gate_review(ctx: click.Context, root: Path, results_file: Path | None, repo: str, number: int | None, head_sha: str, author: str) -> None:
+    """Hold agent gate changes for a human's approval (#73).
+
+    Passes when the policy stage recorded no gate changes. Otherwise passes
+    only when the pull request has an approving review on its head commit from
+    someone who is neither its author nor an agent account. Reads reviews with
+    GH_TOKEN (else GITHUB_TOKEN). Exits 1 when the review is missing.
+    """
+    try:
+        results = gate_review.load_results(results_file or pipeline.results_path(root))
+        pr = gate_review.resolve_pull_request(gate_review.pull_request_from_env(), repo, number, head_sha, author)
+        verdict = gate_review.review(results, pr, gate_review.client_from_env, gate_review.agent_authors())
+    except gate_review.GateReviewError as err:
+        fail(ctx, str(err))
+    if ctx.obj["output"] == "json":
+        emit_json(verdict.as_dict())
+    else:
+        click.echo(gate_review.summary(verdict), nl=False)
+    ctx.exit(0 if verdict.ok else 1)
 
 
 # --- infra ---

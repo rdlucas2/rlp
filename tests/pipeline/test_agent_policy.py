@@ -106,6 +106,24 @@ def test_summary_lists_gate_changes(repo):
     assert "- [RLP-A004] " in out
 
 
+NO_PR = {"GITHUB_EVENT_PATH": "", "GH_TOKEN": "", "GITHUB_TOKEN": ""}
+
+
+def test_gate_review_holds_an_agent_gate_change_and_passes_a_human_one(repo):
+    """The gate-review check reads the policy stage's gate changes (#73); with none it needs no review."""
+    base = head(repo)
+    add_nosemgrep(repo)
+    policy_stage(repo, base, AGENT)
+    held = rlp(repo, "pipeline", "gate-review", "-o", "json", extra_env=NO_PR)
+    assert held.returncode == 2, held.stdout
+    assert "gate change(s) need a review" in json.loads(held.stdout)["error"]
+
+    policy_stage(repo, base, HUMAN)
+    passed = rlp(repo, "pipeline", "gate-review", "-o", "json", extra_env=NO_PR)
+    assert passed.returncode == 0, passed.stdout
+    assert json.loads(passed.stdout)["detail"] == "no gate changes; no review needed"
+
+
 @pytest.mark.parametrize("name", CHANGES)
 def test_same_change_from_a_human_passes(repo, name):
     make, _ = CHANGES[name]

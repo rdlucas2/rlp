@@ -14,6 +14,11 @@ name: pipeline
 
 on:
   pull_request:
+    # labeled and unlabeled: the agent:authored label decides whether the
+    # rlp.agent rules apply, and a PR is often labelled after it opens.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]  # golden.yml's gate-review re-checks on each review
   push:
     branches: [main]
     tags: ["v*"]
@@ -41,4 +46,5 @@ jobs:
       contents: write          # publish: attach zips and jars to GitHub Releases
       packages: write          # publish: push the platform image to GHCR
       security-events: write   # gates: upload SARIF to code scanning
+      pull-requests: read      # gate-review: read the PR's reviews
       id-token: write          # deploy: GitHub OIDC for AWS, used only when RLP_DEPLOY_ENV is set
