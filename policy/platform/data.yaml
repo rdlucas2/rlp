@@ -15,6 +15,7 @@ required_tags:
 loop_max_spend_usd: 5
 
 # GitHub logins whose pull requests count as agent-authored for the rlp.agent
-# anti-cheat rules, besides any PR labelled agent:authored. The agent identity
-# (#51) adds its bot login here.
-agent_authors: []
+# anti-cheat rules, besides any PR labelled agent:authored. localrlp is the
+# GitHub App loop workflows open PRs as (#51, docs/loops.md#agent-identity).
+agent_authors:
+  - localrlp[bot]

@@ -1,0 +1,81 @@
+# The loop's agent identity (#51): mint a short-lived installation token for
+# the rlp GitHub App and make git commit as the App's bot user, so commits and
+# pull requests a loop workflow makes show the App as their author. The
+# rlp.agent anti-cheat rules recognise that login (agent_authors in
+# policy/platform/data.yaml). See docs/loops.md#agent-identity.
+#
+#   - uses: actions/checkout@<sha>
+#     with:
+#       persist-credentials: false  # else pushes go out as GITHUB_TOKEN
+#   - id: agent
+#     uses: ./.github/actions/agent-identity
+#     with:
+#       app-id: ${{ secrets.APP_ID }}
+#       private-key: ${{ secrets.APP_PRIVATE_KEY }}
+#   - run: git push origin HEAD  # and gh api calls, as the App
+#     env:
+#       GH_TOKEN: ${{ steps.agent.outputs.token }}
+name: rlp agent identity
+description: Mint a GitHub App installation token and commit as the App's bot user.
+
+inputs:
+  app-id:
+    description: The GitHub App's id (secret APP_ID)
+    required: true
+  private-key:
+    description: The GitHub App's private key (secret APP_PRIVATE_KEY)
+    required: true
+  repositories:
+    description: >-
+      Comma-separated repository names under the same owner the token may
+      reach. Defaults to the current repository.
+    required: false
+    default: ""
+
+outputs:
+  token:
+    description: The installation token. Revoked when the job ends.
+    value: ${{ steps.token.outputs.token }}
+  login:
+    description: The App's bot login, for example localrlp[bot]
+    value: ${{ steps.git.outputs.login }}
+  email:
+    description: The bot user's noreply commit email
+    value: ${{ steps.git.outputs.email }}
+
+runs:
+  using: composite
+  steps:
+    # Only what a loop needs: push a branch, open a PR, open or comment on an
+    # escalation issue. The App must have been granted at least these.
+    - id: token
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        repositories: ${{ inputs.repositories }}
+        permission-contents: write
+        permission-pull-requests: write
+        permission-issues: write
+
+    # Commits made as <id>+<slug>[bot]@users.noreply.github.com are linked to
+    # the bot user. Git authenticates through gh, which reads GH_TOKEN from the
+    # step that pushes, so the token is never written to disk.
+    - id: git
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.token.outputs.token }}
+        SLUG: ${{ steps.token.outputs.app-slug }}
+      run: |
+        set -euo pipefail
+        login="${SLUG}[bot]"
+        id="$(gh api "users/${SLUG}%5Bbot%5D" --jq .id)"
+        email="${id}+${login}@users.noreply.github.com"
+        git config --global user.name "$login"
+        git config --global user.email "$email"
+        gh auth setup-git --hostname github.com
+        {
+          echo "login=${login}"
+          echo "email=${email}"
+        } >> "$GITHUB_OUTPUT"
+        echo "Committing and opening PRs as ${login}"

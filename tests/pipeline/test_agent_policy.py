@@ -144,6 +144,17 @@ def test_labels_come_from_the_github_event(repo, tmp_path):
     assert warned(proc) == {"RLP-A004"}
 
 
+def test_loop_app_author_counts_as_agent(repo, tmp_path):
+    """A PR opened by the loop's GitHub App (#51) is agent-authored without the label."""
+    base = head(repo)
+    add_nosemgrep(repo)
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"pull_request": {"user": {"login": "localrlp[bot]"}, "labels": []}}), encoding="utf-8")
+    proc = rlp(repo, "policy", "check", ".", "-o", "json", extra_env={"RLP_BASELINE": base, "GITHUB_EVENT_PATH": str(event)})
+    assert proc.returncode == 0, proc.stderr
+    assert warned(proc) == {"RLP-A004"}
+
+
 def results(tests: int, percent: float) -> list[dict]:
     return [
         {"stage": "test", "status": "passed", "data": {"tests": {"api": tests}}},

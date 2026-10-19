@@ -1,0 +1,96 @@
+# Self-test for the loop's agent identity (#51). Run it by hand from the
+# Actions tab. It mints a token for the rlp GitHub App, pushes a throwaway
+# branch as the App, opens a draft PR labelled agent:authored, and checks that
+# GitHub shows the App as the author of both the commit and the PR. Then it
+# closes the PR and deletes the branch, unless keep-open is set.
+name: agent-identity
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep-open:
+        description: Leave the test PR and its branch open for inspection
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-identity
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # push as the App, not as GITHUB_TOKEN
+
+      - id: agent
+        uses: ./.github/actions/agent-identity
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - id: pr
+        name: Push a branch and open a draft PR as the App
+        env:
+          GH_TOKEN: ${{ steps.agent.outputs.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          branch="rlp/loop/identity-check/${GITHUB_RUN_ID}"
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+          git switch -c "$branch"
+          echo "Agent identity check from ${RUN_URL}" > agent-identity-check.txt
+          git add agent-identity-check.txt
+          git commit -q -m "chore: agent identity check (run ${GITHUB_RUN_ID})"
+          git push -q origin "$branch"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          number="$(gh api "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f title="chore: agent identity check (run ${GITHUB_RUN_ID})" \
+            -f head="$branch" -f base="$BASE" -F draft=true \
+            -f body="Opened by the agent-identity workflow (#51) to check the loop's GitHub App identity: ${RUN_URL}. Not for merging." \
+            --jq .number)"
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${number}/labels" -f "labels[]=agent:authored" --silent
+
+      - name: Check the App is the author
+        env:
+          GH_TOKEN: ${{ steps.agent.outputs.token }}
+          LOGIN: ${{ steps.agent.outputs.login }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          pr_author="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}" --jq .user.login)"
+          commit_author="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}" --jq '.author.login // ""')"
+          {
+            echo "## Agent identity"
+            echo
+            echo "| | Login |"
+            echo "| --- | --- |"
+            echo "| Expected | \`${LOGIN}\` |"
+            echo "| PR #${NUMBER} author | \`${pr_author}\` |"
+            echo "| Commit ${SHA:0:7} author | \`${commit_author}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$pr_author" != "$LOGIN" ] || [ "$commit_author" != "$LOGIN" ]; then
+            echo "::error::expected ${LOGIN} as PR and commit author, got PR ${pr_author:-none}, commit ${commit_author:-none}"
+            exit 1
+          fi
+          echo "PR #${NUMBER} and commit ${SHA} are authored by ${LOGIN}"
+
+      - name: Close the test PR and delete its branch
+        if: always() && !inputs.keep-open && steps.pr.outputs.branch != ''
+        env:
+          GH_TOKEN: ${{ steps.agent.outputs.token }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        run: |
+          if [ -n "$NUMBER" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}" -f state=closed --silent
+          fi
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" --silent
