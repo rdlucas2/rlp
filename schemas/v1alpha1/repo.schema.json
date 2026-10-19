@@ -115,6 +115,10 @@
         "verbs": {
           "$ref": "#/$defs/verbs"
         },
+        "lock": {
+          "description": "Command line, run in the component's path, that regenerates its lockfile after a dependency manifest changes, for example `uv lock`. The vuln loop runs it after an attempt that changed one. When absent, a tracked uv.lock at the component's path means `uv lock`; otherwise nothing runs.",
+          "$ref": "#/$defs/verbCommand"
+        },
         "reports": {
           "$ref": "#/$defs/reports"
         },

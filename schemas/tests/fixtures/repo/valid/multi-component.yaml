@@ -21,6 +21,7 @@ components:
     runtime:
       kind: function
       handler: worker.main.handler
+    lock: uv lock
     services:
       - name: jobs
         kind: sqs

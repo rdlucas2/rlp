@@ -234,6 +234,33 @@
           "description": "Wall-clock time of the iteration (agent call and verification), in seconds. Absent in state files from before rlp recorded it.",
           "type": "number",
           "minimum": 0
+        },
+        "afterAttempt": {
+          "description": "Steps the loop kind ran on the kept attempt before committing it, such as the vuln loop regenerating a lockfile. Absent when none ran.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["component", "command", "exitCode", "files"],
+            "properties": {
+              "component": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "exitCode": {
+                "type": "integer"
+              },
+              "files": {
+                "description": "Files the step changed, relative to the repo root.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },
