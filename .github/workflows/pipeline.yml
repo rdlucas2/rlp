@@ -14,6 +14,9 @@ name: pipeline
 
 on:
   pull_request:
+    # labeled and unlabeled: the agent:authored label decides whether the
+    # rlp.agent rules apply, and a PR is often labelled after it opens.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   pull_request_review:
     types: [submitted, dismissed]  # golden.yml's gate-review re-checks on each review
   push:

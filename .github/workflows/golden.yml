@@ -2,6 +2,7 @@
 #
 #   on:
 #     pull_request:
+#       types: [opened, synchronize, reopened, labeled, unlabeled]  # labels decide agent-authored
 #     pull_request_review:
 #       types: [submitted, dismissed]   # gate-review re-checks on each review
 #     push:
