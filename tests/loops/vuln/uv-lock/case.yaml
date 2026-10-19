@@ -1,0 +1,26 @@
+# A vulnerable pin in a uv project: the fix is a pyproject.toml bump plus a
+# regenerated uv.lock, which the loop makes itself with `uv lock` (#80).
+description: pyproject.toml and uv.lock pin cryptography 42.0.0 (CVE-2024-26130, HIGH); 42.0.4 fixes it. The loop runs uv lock.
+expect:
+  outcome: fixed
+  iterations: 1
+# Verb overrides for this case: setup installs from the lockfile and fails if it is stale.
+verbs:
+  setup: uv sync --locked
+# Stand-in wheels the tests build into wheels/ (tests only): uv resolves from them offline.
+wheels:
+  cryptography: ["42.0.0", "42.0.4", "43.0.1"]
+# What the fake trivy reports while the pattern is in the file (tests only).
+trivy:
+  - scan: fs
+    file: uv.lock
+    pattern: "name = \"cryptography\"\nversion = \"42.0.0\""
+    target: uv.lock
+    class: lang-pkgs
+    vulnerability:
+      VulnerabilityID: CVE-2024-26130
+      PkgName: cryptography
+      InstalledVersion: 42.0.0
+      FixedVersion: 42.0.4
+      Severity: HIGH
+      Title: "cryptography: NULL pointer dereference with pkcs12.serialize_key_and_certificates"

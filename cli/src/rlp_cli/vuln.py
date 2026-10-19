@@ -28,18 +28,30 @@ The agent may change only dependency manifests and lockfiles (requirements
 files, pyproject.toml, uv.lock, package.json and so on) and Dockerfiles: the
 tracked ones at each component's root, its declared Dockerfile, and any
 manifest the filesystem scan named, outside hidden and protected directories.
+
+The agent can't run commands, so after a kept attempt that changed a
+dependency manifest at a component's root, the loop regenerates that
+component's lockfile itself (#80) before committing: the component's `lock`
+command from rlp.yaml, or `uv lock` when a uv.lock is tracked beside it. The
+regenerated lockfile goes into the iteration's commit, so the major-bump
+review sees it. A lock command that fails, or that changes a file outside the
+allowed paths, throws the attempt away and its output goes into the next
+prompt.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
+import shutil
 import subprocess
 import tomllib
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
-from rlp_cli import loop, pipeline, trivy, vex
+from rlp_cli import agent, loop, pipeline, trivy, vex
 from rlp_cli.contract import component_dir
 
 NAME = "vuln"
@@ -55,6 +67,10 @@ MANIFESTS = frozenset({
 IMAGE_PREFIX = "trivy-image-"
 # Exceptions and Trivy settings: an attempt that touches one is put back and thrown away, even where git ignores it.
 GUARDED = (".rlp/vex.yaml", ".trivyignore", ".trivyignore.yaml", "trivy.yaml", "trivy.yml")
+# The lock command a tracked lockfile implies when the component declares none.
+DEFAULT_LOCKS = {"uv.lock": "uv lock"}
+LOCK_TIMEOUT_SECONDS = 600
+LOCK_OUTPUT_CHARS = 3000
 
 
 # --- file kinds ---
@@ -234,6 +250,69 @@ def needs_major(installed: str, fixed: str) -> bool:
     return have not in wanted
 
 
+# --- regenerating lockfiles ---
+
+
+def lock_commands(root: Path, doc: dict) -> list[dict]:
+    """{component, path, command} for each component with a lock command: declared, or implied by its lockfile."""
+    tracked = set(_tracked(root))
+    out = []
+    for c in doc.get("components") or []:
+        rel = _rel(root, c)
+        command = c.get("lock") or next((cmd for name, cmd in DEFAULT_LOCKS.items() if _join(rel, name) in tracked), "")
+        if command:
+            out.append({"component": c["name"], "path": rel, "command": command})
+    return out
+
+
+def _at_root(rel: str, path: str) -> bool:
+    prefix = "" if rel == "." else rel + "/"
+    return path.startswith(prefix) and "/" not in path[len(prefix):]
+
+
+def _tail(text: str) -> str:
+    text = text.strip()
+    return text if len(text) <= LOCK_OUTPUT_CHARS else "..." + text[-LOCK_OUTPUT_CHARS:]
+
+
+def run_lock(root: Path, lock: dict) -> tuple[int, str]:
+    """Run one lock command in its component's directory: (exit code, combined output)."""
+    argv = shlex.split(lock["command"], posix=True)
+    exe = shutil.which(argv[0]) if argv else None
+    if exe is None:
+        return 127, f"command not found: {argv[0] if argv else lock['command']}"
+    try:
+        proc = subprocess.run([exe, *argv[1:]], cwd=root / lock["path"], env=dict(os.environ), capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=LOCK_TIMEOUT_SECONDS, check=False)
+    except subprocess.TimeoutExpired:
+        return 124, f"timed out after {LOCK_TIMEOUT_SECONDS} seconds"
+    except OSError as err:
+        return 126, str(err)
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+def regenerate_locks(root: Path, doc: dict, changed: list[str], allowed: list[str]) -> loop.AfterAttempt:
+    """After a kept attempt: run the lock command of each component whose root manifests the agent changed."""
+    out = loop.AfterAttempt()
+    for lock in lock_commands(root, doc):
+        if not any(_at_root(lock["path"], f) and is_manifest(f) and not is_dockerfile(PurePosixPath(f).name) for f in changed):
+            continue
+        before = agent.snapshot(root)
+        code, output = run_lock(root, lock)
+        files = agent.changed(before, agent.snapshot(root))
+        out.files += files
+        out.steps.append({"component": lock["component"], "command": lock["command"], "exitCode": code, "files": files})
+        where = f"the lock command `{lock['command']}` for component {lock['component']}"
+        if code != 0:
+            out.rejected = f"{where} failed (exit {code}):\n{_tail(output)}"
+            return out
+        stray = agent.outside(files, allowed)
+        if stray:
+            out.rejected = f"{where} changed files outside the allowed paths: {', '.join(stray)}"
+            return out
+    return out
+
+
 # --- discovery ---
 
 
@@ -316,6 +395,11 @@ def discover(root: Path, doc: dict) -> list[dict]:
             if f["id"] not in seen:
                 seen.add(f["id"])
                 findings.append(f)
+    locks = lock_commands(root, doc)
+    for f in findings:
+        lock = next((lk for lk in locks if f.get("source") == "dependency" and _at_root(lk["path"], f.get("path", ""))), None)
+        if lock:
+            f["lock"] = lock["command"]
     if not findings:
         findings.append({"id": "trivy", "stage": "trivy", "message": f"the trivy stage failed: {r.get('detail', '')}"})
     return findings
@@ -402,6 +486,18 @@ def build_prompt(p: loop.PromptInput) -> str:
     by_manifest: dict[str, list[dict]] = {}
     for f in p.findings:
         by_manifest.setdefault(f.get("path", "") or "(no manifest)", []).append(f)
+    locks = sorted({(f["path"], f["lock"]) for f in p.findings if f.get("lock")})
+    if locks:
+        lines += ["", "Lockfiles:", ""]
+        for manifest, command in locks:
+            folder = PurePosixPath(manifest).parent.as_posix()
+            where = "the repo root" if folder == "." else folder
+            lines.append(f"- After your change the loop runs `{command}` in {where}, which regenerates the lockfile there.")
+        lines += [
+            "- So fix a package there in its manifest (pyproject.toml, package.json and so on), not by editing the lockfile:",
+            "  raise the declared pin to the fixed release, within its current major version (for example ==42.0.4, not >=42.0.4).",
+            "  For a package the manifest doesn't declare, add a constraint the package manager reads (for uv, [tool.uv] constraint-dependencies).",
+        ]
     for manifest, group in by_manifest.items():
         base = any(f.get("source") == "base-image" for f in group)
         lines += ["", f"## {manifest}" + (" (base image)" if base else ""), ""]
@@ -411,7 +507,10 @@ def build_prompt(p: loop.PromptInput) -> str:
             else:
                 lines.append(f"- {f.get('message', '')}")
     if p.rejected:
-        lines += ["", f"The previous attempt was thrown away: {p.rejected}"]
+        first, _, rest = p.rejected.partition("\n")
+        lines += ["", f"The previous attempt was thrown away: {first}"]
+        if rest.strip():
+            lines += ["", _fence(rest)]
     failed = [g for g in p.gates if g.get("status") == "failed"]
     if failed:
         lines += ["", "The gates still fail after the previous attempt:"]
@@ -430,4 +529,5 @@ KIND = loop.register(loop.LoopKind(
     preflight=preflight,
     review=review,
     guarded=GUARDED,
+    after_attempt=regenerate_locks,
 ))

@@ -21,11 +21,12 @@ Each schema's `$id` is its raw URL on `main`. Put this first line in a contract 
 ## Repo contract in brief
 
 - `metadata`: `name`, `project` (the project record id), optional `owners` and `template` (Copier `source` and `version`).
-- `components[]`: one entry per buildable unit, each with `name`, `path`, `language`, `artifact`, `runtime`, `verbs`, `reports`, `config`, `services` and `telemetry`.
+- `components[]`: one entry per buildable unit, each with `name`, `path`, `language`, `artifact`, `runtime`, `verbs`, `lock`, `reports`, `config`, `services` and `telemetry`.
 - Artifact kinds: `container-image`, `zip`, `jar`, `static`. `zip`, `jar` and `static` need `artifact.path`.
 - Runtime kinds: `container-service` (needs `port`), `function` (needs `handler`), `static-site`, `job`.
 - Coverage formats: `cobertura`, `lcov`, `jacoco`, `opencover`. Service kinds: `postgres`, `redis`, `s3`, `sqs`, `sns`.
 - **Verb defaults:** when `verbs.<name>` is absent, the verb runs `task <name>` in the component's `path`. Set it to a command line to override.
+- **Lock command:** `lock` is a command line that regenerates the component's lockfile after a dependency manifest changes; the vuln loop runs it. When absent, a tracked `uv.lock` at the component's `path` means `uv lock`.
 - `quality.coverage.minimum`: a percentage; policy (#10) enforces the platform floor.
 - `quality.cost.monthlyBudget`: USD per month per environment; the pipeline's `cost` stage fails an AWS plan whose Infracost estimate is above it (#39).
 - `loops.enabled`: opt the repo in to remediation loops (`rlp loop <kind>`); off when absent. `loops.kinds` limits them to some of `quality` and `vuln`. `RLP_LOOPS=off` in the environment turns them off regardless (see [docs/loops.md](../docs/loops.md)).

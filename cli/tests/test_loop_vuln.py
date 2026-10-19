@@ -10,12 +10,16 @@ each case's script. No test calls a real model.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -108,12 +112,32 @@ def fake(monkeypatch) -> agent.FakeProvider:
     return provider
 
 
+def build_wheel(folder: Path, name: str, version: str) -> None:
+    """A minimal pure-Python wheel, byte-for-byte the same every time, so uv can resolve offline."""
+    dist = name.replace("-", "_")
+    info = f"{dist}-{version}.dist-info"
+    files = {
+        f"{dist}/__init__.py": f'__version__ = "{version}"\n',
+        f"{info}/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+        f"{info}/WHEEL": "Wheel-Version: 1.0\nGenerator: rlp-tests\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+    }
+    record = []
+    for path, text in files.items():
+        digest = base64.urlsafe_b64encode(hashlib.sha256(text.encode()).digest()).rstrip(b"=").decode()
+        record.append(f"{path},sha256={digest},{len(text.encode())}")
+    files[f"{info}/RECORD"] = "\n".join([*record, f"{info}/RECORD,,"]) + "\n"
+    folder.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(folder / f"{dist}-{version}-py3-none-any.whl", "w") as whl:
+        for path, text in files.items():
+            whl.writestr(zipfile.ZipInfo(path, (2020, 1, 1, 0, 0, 0)), text)
+
+
 def make_repo(tmp_path: Path, monkeypatch, case: str | None, loops: dict | None = None) -> Path:
     """The pipeline fixture repo with loops set, a package verb that needs no Docker, a baseline commit, then the case's seed commit."""
     repo = tmp_path / "hello"
     shutil.copytree(HELLO, repo)
     doc = yaml.safe_load((repo / "rlp.yaml").read_text(encoding="utf-8"))
-    doc["components"][0]["verbs"] = {"package": "python -c \"print('image built')\""}
+    doc["components"][0]["verbs"] = {"package": "python -c \"print('image built')\"", **((load_case(case).get("verbs") or {}) if case else {})}
     if loops is not None:
         doc["loops"] = loops
     (repo / "rlp.yaml").write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
@@ -121,6 +145,9 @@ def make_repo(tmp_path: Path, monkeypatch, case: str | None, loops: dict | None 
     commit(repo, "baseline")
     if case:
         seed(repo, case)
+        for name, versions in (load_case(case).get("wheels") or {}).items():
+            for version in versions:
+                build_wheel(repo / "wheels", name, version)
         commit(repo, f"seed {case}")
         monkeypatch.setenv("FAKE_TRIVY_RULES", json.dumps(load_case(case)["trivy"]))
     monkeypatch.setenv("PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""))
@@ -280,6 +307,119 @@ def test_green_gates_have_no_findings(tmp_path, monkeypatch, fake_trivy, fake):
     assert report.outcome == "no-findings" and fake.prompts == []
 
 
+# --- regenerating lockfiles (#80) ---
+
+
+@pytest.fixture
+def uv_case(monkeypatch) -> None:
+    """The seeded uv case runs the real uv, offline, against stand-in wheels. `task test` installs uv with the test extras."""
+    if shutil.which("uv", path=str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")) is None:
+        pytest.skip("uv is not installed (it comes with the test extras: pip install -e '.[test]')")
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+    monkeypatch.setenv("UV_PYTHON", sys.executable)
+
+
+PYPROJECT_FIX = json.loads((CASES / "uv-lock" / "agent.json").read_text(encoding="utf-8"))[0]["files"]["pyproject.toml"]
+
+
+def test_seeded_uv_case_regenerates_the_lockfile_and_ends_fixed(tmp_path, monkeypatch, fake_trivy, fake, uv_case):
+    expect = load_case("uv-lock")["expect"]
+    repo = make_repo(tmp_path, monkeypatch, "uv-lock", loops={"enabled": True})
+    assert run_gates(repo) == {"setup": "passed", "test": "passed", "package": "passed", "trivy": "failed"}
+    [finding] = vuln.discover(repo, rlp_doc(repo))
+    assert (finding["path"], finding["lock"]) == ("uv.lock", "uv lock")
+    fake.steps = script("uv-lock")
+    report = run_loop(repo)
+    assert report.outcome == expect["outcome"] == "fixed", report.reason
+    state = validate_state(repo / report.state_file)
+    assert len(state["iterations"]) == expect["iterations"]
+    [it] = state["iterations"]
+    assert it["agent"]["changedFiles"] == ["pyproject.toml"]
+    assert it["afterAttempt"] == [{"component": "api", "command": "uv lock", "exitCode": 0, "files": ["uv.lock"]}]
+    assert {g["stage"]: g["status"] for g in it["gates"]} == dict.fromkeys(GATES, "passed")
+    # uv sync --locked passed in setup, and the regenerated lockfile is in the iteration's commit
+    assert git(repo, "show", "--name-only", "--format=", it["commit"]).splitlines() == ["pyproject.toml", "uv.lock"]
+    lock = git(repo, "show", f"{state['branch']}:uv.lock")
+    assert 'name = "cryptography"\nversion = "42.0.4"' in lock and "42.0.0" not in lock
+    prompt = fake.prompts[0]
+    assert "After your change the loop runs `uv lock` in the repo root" in prompt and "not by editing the lockfile" in prompt
+
+
+def test_a_failing_lock_command_throws_the_attempt_away_and_reaches_the_next_prompt(tmp_path, monkeypatch, fake_trivy, fake, uv_case):
+    repo = make_repo(tmp_path, monkeypatch, "uv-lock", loops={"enabled": True})
+    run_gates(repo)
+    unresolvable = PYPROJECT_FIX.replace("42.0.4", "99.0")
+    fake.steps = [agent.FakeStep(files={"pyproject.toml": unresolvable}, summary="pinned 99.0", cost_usd=0.05), *script("uv-lock")]
+    report = run_loop(repo)
+    assert report.outcome == "fixed", report.reason
+    first, second = validate_state(repo / report.state_file)["iterations"]
+    assert first["rejected"].startswith("the lock command `uv lock` for component api failed (exit 1)")
+    assert first["commit"] == "" and first["gates"] == [] and first["afterAttempt"][0]["exitCode"] == 1
+    assert second["rejected"] == "" and second["commit"]
+    assert "thrown away: the lock command `uv lock` for component api failed (exit 1)" in fake.prompts[1]
+    assert "```text" in fake.prompts[1] and "cryptography==99.0" in fake.prompts[1]
+    # the thrown-away attempt left nothing behind
+    assert git(repo, "show", f"{validate_state(repo / report.state_file)['branch']}~1:pyproject.toml") == git(repo, "show", "main:pyproject.toml")
+
+
+def test_a_regenerated_lockfile_that_moves_a_direct_dependency_a_major_escalates(tmp_path, monkeypatch, fake_trivy, fake, uv_case):
+    repo = make_repo(tmp_path, monkeypatch, "uv-lock", loops={"enabled": True})
+    run_gates(repo)
+    loose = PYPROJECT_FIX.replace("==42.0.4", ">=42.0.4")  # uv lock picks the newest match, 43.0.1
+    fake.steps = [agent.FakeStep(files={"pyproject.toml": loose}, summary="loosened the pin", cost_usd=0.05)]
+    report = run_loop(repo)
+    assert report.outcome == "escalated", report.reason
+    assert "dependency cryptography 42.0.0 -> 43.0.1 in uv.lock" in report.reason
+    state = validate_state(repo / report.state_file)
+    assert all(g["status"] == "passed" for g in state["iterations"][-1]["gates"])
+
+
+def lock_repo(tmp_path: Path, files: dict[str, str]) -> Path:
+    return tracked(tmp_path, {"Dockerfile": "FROM python:3.13-slim\n", **files})
+
+
+def test_lock_commands_come_from_rlp_yaml_or_a_tracked_uv_lock(tmp_path):
+    root = lock_repo(tmp_path, {"pyproject.toml": "x\n", "uv.lock": "x\n", "web/package.json": "{}\n", "job/requirements.txt": "a==1\n"})
+    doc = {"components": [{"name": "api"}, {"name": "web", "path": "web", "lock": "npm install --package-lock-only"}, {"name": "job", "path": "job"}]}
+    assert vuln.lock_commands(root, doc) == [
+        {"component": "api", "path": ".", "command": "uv lock"},
+        {"component": "web", "path": "web", "command": "npm install --package-lock-only"},
+    ]
+    doc["components"][0]["lock"] = "uv lock --upgrade-package cryptography"
+    assert vuln.lock_commands(root, doc)[0]["command"] == "uv lock --upgrade-package cryptography"
+
+
+def python_command(code: str) -> str:
+    """A lock command line that runs Python code; quoted so it splits the same way on every OS."""
+    return shlex.join([sys.executable, "-c", code])
+
+
+def lock_doc(command: str) -> dict:
+    return {"components": [{"name": "api", "lock": command}]}
+
+
+def test_the_lock_command_runs_only_when_a_root_manifest_changed(tmp_path):
+    root = lock_repo(tmp_path, {"requirements.txt": "a==1\n", "deps.lock": "1\n", "src/app.py": "x\n"})
+    bump = python_command("open('deps.lock', 'w').write('2\\n')")
+    allowed = ["Dockerfile", "deps.lock", "requirements.txt"]
+    assert vuln.regenerate_locks(root, lock_doc(bump), ["Dockerfile"], allowed) == loop.AfterAttempt()
+    assert (root / "deps.lock").read_text(encoding="utf-8") == "1\n"
+    out = vuln.regenerate_locks(root, lock_doc(bump), ["requirements.txt"], allowed)
+    assert out.rejected == "" and out.files == ["deps.lock"]
+    assert out.steps == [{"component": "api", "command": bump, "exitCode": 0, "files": ["deps.lock"]}]
+
+
+def test_a_lock_command_that_changes_files_outside_the_allowed_paths_is_rejected(tmp_path):
+    root = lock_repo(tmp_path, {"requirements.txt": "a==1\n", "src/app.py": "x\n"})
+    stray = python_command("open('src/app.py', 'w').write('y')")
+    out = vuln.regenerate_locks(root, lock_doc(stray), ["requirements.txt"], ["Dockerfile", "requirements.txt"])
+    assert out.rejected.endswith("changed files outside the allowed paths: src/app.py") and out.files == ["src/app.py"]
+    missing = vuln.regenerate_locks(root, lock_doc("no-such-lock-tool --flag"), ["requirements.txt"], ["requirements.txt"])
+    assert missing.rejected.startswith("the lock command `no-such-lock-tool --flag` for component api failed (exit 127)")
+    assert "command not found: no-such-lock-tool" in missing.rejected
+
+
 # --- discovery details ---
 
 
@@ -431,6 +571,7 @@ def test_vuln_is_registered_with_its_verify_stages_and_hooks():
     assert kind.build_prompt is vuln.build_prompt and kind.preflight is vuln.preflight and kind.review is vuln.review
     assert loop.KINDS["quality"].preflight is None and loop.KINDS["quality"].review is None
     assert ".rlp/vex.yaml" in kind.guarded and loop.KINDS["quality"].guarded == ()
+    assert kind.after_attempt is vuln.regenerate_locks and loop.KINDS["quality"].after_attempt is None
 
 
 def test_guarded_files_are_put_back_whether_changed_created_or_deleted(tmp_path):

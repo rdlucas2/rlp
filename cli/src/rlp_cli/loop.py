@@ -16,8 +16,10 @@ cap is hit:
 
 A kind can also stop a run for a human: its `preflight` hook escalates before
 the first agent call (for example, a fix that needs a major-version bump),
-and its `review` hook escalates a run whose verify stages passed but whose
-change a human must decide on.
+its `after_attempt` hook runs a trusted step on a kept attempt before it is
+committed (for example, regenerating a lockfile, #80) and can throw the
+attempt away, and its `review` hook escalates a run whose verify stages passed
+but whose change a human must decide on.
 
 Work happens on a branch `rlp/loop/<kind>/<run-id>`, one commit per accepted
 attempt; the base branch is never committed to, and is checked out again when
@@ -69,6 +71,15 @@ Finding = dict  # at least "message"; kinds add id, path, line, rule, severity
 
 
 @dataclass
+class AfterAttempt:
+    """What a kind's after_attempt hook did to a kept attempt before it is committed."""
+
+    files: list[str] = field(default_factory=list)  # more files to commit with the agent's, relative to the root
+    rejected: str = ""  # why to throw the attempt away instead; "" keeps it
+    steps: list[dict] = field(default_factory=list)  # what ran, recorded in the iteration's state
+
+
+@dataclass
 class LoopKind:
     """What a loop kind plugs into the runner."""
 
@@ -85,6 +96,9 @@ class LoopKind:
     # Files (relative to the root) an attempt must leave byte-for-byte as they were, even when
     # git ignores them and the provider can't see the change; a changed one is put back and the attempt thrown away.
     guarded: tuple[str, ...] = ()
+    # (repo root, rlp.yaml, the agent's changed files, allowed paths) -> files to add to the attempt, or why to
+    # throw it away. Runs on a kept attempt, before staging; it may run commands the agent can't.
+    after_attempt: Callable[[Path, dict, list[str], list[str]], AfterAttempt] | None = None
 
 
 @dataclass
@@ -164,6 +178,7 @@ class Iteration:
     spent_usd: float
     findings_after: int | None = None
     duration_seconds: float | None = None
+    after: list[dict] | None = None  # the after_attempt hook's steps, when it ran any
 
     def as_dict(self) -> dict:
         out = {
@@ -180,6 +195,8 @@ class Iteration:
             out["findingsAfter"] = self.findings_after
         if self.duration_seconds is not None:
             out["durationSeconds"] = round(self.duration_seconds, 3)
+        if self.after:
+            out["afterAttempt"] = self.after
         return out
 
 
@@ -516,13 +533,23 @@ def iterate(root, kind: LoopKind, opts: Options, state: State, provider, build, 
         state.spent_usd, state.calls = spend.spent_usd, spend.calls
         record = Iteration(number, findings, result.as_dict(), {"files": 0, "insertions": 0, "deletions": 0}, [], "", "", spend.spent_usd)
         outside = list(dict.fromkeys([*result.outside_allowed, *tampered]))
+        files = list(result.changed_files)
         if outside:
-            discard(root, [f for f in result.changed_files if f not in tampered])
-            record.rejected = rejected = f"it changed files outside the allowed paths: {', '.join(outside)}"
-            opts.event(f"iteration {number}: attempt thrown away ({record.rejected})")
+            discard(root, [f for f in files if f not in tampered])
+            record.rejected = f"it changed files outside the allowed paths: {', '.join(outside)}"
+        elif kind.after_attempt is not None and files:
+            after = kind.after_attempt(root, contract.load_repo(root), files, state.allowed_paths)
+            record.after = after.steps or None
+            tampered = restore_guarded(root, before)
+            files = list(dict.fromkeys([*files, *after.files]))
+            if after.rejected or tampered:
+                discard(root, [f for f in files if f not in tampered])
+                record.rejected = after.rejected or f"its after-attempt step changed guarded files: {', '.join(tampered)}"
+        rejected = record.rejected
+        if rejected:
+            opts.event(f"iteration {number}: attempt thrown away ({rejected.splitlines()[0]})")
         else:
-            rejected = ""
-            record.diff_stat = stage_and_stat(root, result.changed_files)
+            record.diff_stat = stage_and_stat(root, files)
             record.commit = commit(root, f"fix({kind.name}): rlp loop iteration {number}\n\n{result.summary}")
             gates = record.gates = verify(root, kind.verify_stages, stream)
             opts.event(f"iteration {number}: " + ", ".join(f"{g['stage']} {g['status']}" for g in gates))
