@@ -1,0 +1,9 @@
+[
+  {
+    "summary": "Replaced hashlib.md5 with hashlib.sha256 in src/hello/digest.py.",
+    "costUsd": 0.12,
+    "files": {
+      "src/hello/digest.py": "\"\"\"Content digests.\"\"\"\n\nimport hashlib\n\n\ndef digest(data: bytes) -> str:\n    return hashlib.sha256(data).hexdigest()\n"
+    }
+  }
+]

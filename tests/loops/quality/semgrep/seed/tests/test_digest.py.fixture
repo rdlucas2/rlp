@@ -1,0 +1,6 @@
+from hello.digest import digest
+
+
+def test_digest_is_hex_and_tells_inputs_apart():
+    assert int(digest(b"rlp"), 16) >= 0
+    assert digest(b"rlp") != digest(b"pipeline")

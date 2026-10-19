@@ -1,6 +1,6 @@
 # Remediation loops
 
-A remediation loop reads a failing gate, asks an agent to fix the code, reruns the gate and opens a PR only when it passes. This page covers the pieces every loop shares: the **on/off toggle**, the **loop runner** (`rlp loop <kind>`) and the **agent provider**, the interface a loop uses to ask an agent for a change. The individual loops (quality #48, vuln #49) build on them.
+A remediation loop reads a failing gate, asks an agent to fix the code, reruns the gate and opens a PR only when it passes. This page covers the pieces every loop shares: the **on/off toggle**, the **loop runner** (`rlp loop <kind>`) and the **agent provider**, the interface a loop uses to ask an agent for a change. The individual loops build on them: [the quality loop](#the-quality-loop) (#48) and the vulnerability loop (#49).
 
 ## Turning loops on and off
 
@@ -65,6 +65,67 @@ A kind is a `rlp_cli.loop.LoopKind` registered with `loop.register()`:
 - `build_prompt(PromptInput)` is optional; without it the runner's default prompt lists the findings and the failing gate output.
 
 Add the kind's name to `KNOWN_KINDS` in `loop.py` and to the `loops.kinds` enum in `schemas/v1alpha1/repo.schema.json`.
+
+## The quality loop
+
+`rlp loop quality` fixes what the code-quality gates found: `lint`, `test`, `coverage` (overall and on new code) and `sast` (Semgrep). The same four stages are its verify stages, so a run is `fixed` only when all of them pass on the loop branch.
+
+**Discovery** reads the gates' last results, so run them first; the loop workflow runs each one on its own so every failure is recorded:
+
+```sh
+rlp pipeline run --reset -s setup
+for s in lint test coverage sast; do rlp pipeline run -s "$s"; done
+rlp loop quality
+```
+
+| Gate | What goes in the prompt |
+| --- | --- |
+| `lint`, `test` | The verb's output for each failing component (its last 4,000 characters). Discovery runs the verb again to capture it, since the agent can't run commands |
+| `coverage` | Components below the minimum, and each file's changed lines that no test covers, from the new-code check |
+| `sast` | Each Semgrep finding's file, line, rule and message, from `results.json` (else `.rlp/pipeline/reports/semgrep.json`) |
+| `sonar` | Only when `SONAR_TOKEN` is set and the optional `sonar` stage failed: the project's open issues from the Sonar issues API |
+
+A stage after the first failing one keeps its last recorded result until it reruns, so a later iteration can still list a finding an earlier attempt already fixed; the gates decide.
+
+**Allowed paths** are each component's tracked top-level directories, for example `src` and `tests` (or `platform/src` and `platform/tests` for a component at `platform/`). Hidden directories (`.github`, `.rlp`), `policy`, `infra`, `reports`, another component's directory and every file at a component's root (`Taskfile.yml`, `pyproject.toml`, `rlp.yaml`, lint and coverage config) are never among them. The `rlp.agent` rules judge what the agent does change.
+
+**The pull request.** A fixed run's branch becomes a PR with `rlp loop pr`, which refuses any run that isn't `fixed` or whose last kept iteration has a verify stage that didn't pass, so no PR opens while a gate is red:
+
+```sh
+rlp loop pr .rlp/loops/quality-<run-id>.json           # print the Markdown
+git push origin rlp/loop/quality/<run-id>
+rlp loop pr .rlp/loops/quality-<run-id>.json --post    # open it into the base branch, labelled agent:authored and loop:quality
+```
+
+**In CI**, call the reusable [`loop-quality.yml`](../.github/workflows/loop-quality.yml) workflow after a failed golden run:
+
+```yaml
+jobs:
+  golden:
+    uses: rdlucas2/rlp/.github/workflows/golden.yml@<rlp git ref>
+    with: {rlp-version: "0.2.0"}
+  quality-loop:
+    needs: golden
+    if: failure()
+    uses: rdlucas2/rlp/.github/workflows/loop-quality.yml@<rlp git ref>
+    with: {rlp-version: "0.2.0"}
+    secrets:
+      app-id: ${{ secrets.APP_ID }}
+      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+The job is skipped when the `RLP_LOOPS` variable is off, and every step after the toggle check is skipped unless `rlp.yaml` turns the quality loop on, so a repo that hasn't opted in spends nothing. Otherwise it reruns the gates, runs `rlp loop quality` with the `claude-code` provider, then pushes the branch and opens the PR as the [agent identity](#agent-identity) when the run is `fixed`, or opens an [escalation issue](#escalation) when it is `escalated` or `error`. The state file and gate results are uploaded as the `rlp-loop-quality` artifact.
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `rlp-version` | (required) | rlp-cli to install, as for `golden.yml` |
+| `working-directory` | `.` | Repo root of the project |
+| `max-iterations` | 3 | `--max-iterations` |
+| `max-spend` | policy default | `--max-spend` in USD |
+| `claude-code-version` | pinned | The Claude Code CLI the provider runs |
+
+Seeded cases for the loop (a Semgrep finding, a lint error, a drop in new-code coverage and an unfixable finding) are in [`tests/loops/quality/`](../tests/loops/quality/README.md).
 
 ## Escalation
 

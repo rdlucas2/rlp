@@ -49,8 +49,8 @@ class EscalationError(Exception):
 # --- reading the state file ---
 
 
-def load_state(path: Path) -> dict:
-    """Read a loop state file, validated against the LoopState schema."""
+def read_state(path: Path) -> dict:
+    """Read a loop state file, validated against the LoopState schema, whatever its outcome."""
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as err:
@@ -62,6 +62,12 @@ def load_state(path: Path) -> dict:
         first = errors[0]
         where = "/".join(str(p) for p in first.absolute_path) or "(root)"
         raise EscalationError(f"{path}: not a loop state file: {where}: {first.message}")
+    return doc
+
+
+def load_state(path: Path) -> dict:
+    """Read a loop state file that can be escalated."""
+    doc = read_state(path)
     if doc["outcome"] not in ESCALATABLE:
         raise EscalationError(f"{path}: outcome is {doc['outcome']}; only {' or '.join(ESCALATABLE)} runs are escalated")
     return doc
@@ -287,7 +293,7 @@ def client_from_env(env: Mapping[str, str] | None = None) -> GitHub:
     env = os.environ if env is None else env
     token = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")
     if not token:
-        raise EscalationError("set GH_TOKEN (or GITHUB_TOKEN) to a token that can write issues to post an escalation")
+        raise EscalationError("set GH_TOKEN (or GITHUB_TOKEN) to a token that can write issues and pull requests to post to GitHub")
     return GitHub(token, env.get("GITHUB_API_URL") or DEFAULT_API)
 
 

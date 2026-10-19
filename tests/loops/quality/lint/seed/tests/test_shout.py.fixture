@@ -1,0 +1,5 @@
+from hello.shout import shout
+
+
+def test_shout():
+    assert shout("rlp") == "HELLO, RLP"

@@ -1,0 +1,9 @@
+[
+  {
+    "summary": "Added the missing colon to the def line in src/hello/shout.py.",
+    "costUsd": 0.08,
+    "files": {
+      "src/hello/shout.py": "\"\"\"Loud greetings.\"\"\"\n\nfrom hello import greet\n\n\ndef shout(name: str) -> str:\n    return greet(name).upper()\n"
+    }
+  }
+]

@@ -1,0 +1,16 @@
+# Seeded: a shell-injection finding in a workflow. The quality loop may not
+# change .github/, so no attempt can fix it and the loop has to escalate.
+name: triage
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "New issue: ${{ github.event.issue.title }}"

@@ -1,0 +1,14 @@
+# A new Semgrep finding: MD5 used as a digest. The fix is a stronger hash.
+description: src/hello/digest.py hashes with MD5; Semgrep's insecure-hash rule flags it.
+expect:
+  outcome: fixed
+  iterations: 1
+  first-failing-stage: sast
+# What the fake semgrep reports while the pattern is in the file (tests only;
+# the real rule is python.lang.security.insecure-hash-algorithm-md5).
+semgrep:
+  - rule: python.lang.security.insecure-hash-algorithm-md5.insecure-hash-algorithm-md5
+    path: src/hello/digest.py
+    pattern: hashlib.md5(
+    severity: WARNING
+    message: Detected MD5 hash algorithm which is considered insecure. Use SHA256 or SHA3 instead.

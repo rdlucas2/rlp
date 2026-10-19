@@ -23,9 +23,9 @@ Loops are off by default. A repo opts in with `loops.enabled: true` in
 rlp.yaml (optionally `loops.kinds`), and RLP_LOOPS=off in the environment
 turns every loop off whatever rlp.yaml says.
 
-Loop kinds register in KINDS. The concrete kinds (quality #48, vuln #49) are
-separate issues; until one registers, running it reports that it is not
-implemented yet.
+Loop kinds register in KINDS. The quality kind (rlp_cli.quality, #48) is
+imported at the end of this module; a kind that has not registered yet (vuln,
+#49) reports that it is not implemented.
 """
 
 from __future__ import annotations
@@ -488,3 +488,7 @@ def status(root: Path, env: Mapping[str, str] | None = None) -> list[dict]:
         t = toggle(doc, name, env)
         rows.append({"loop": name, "enabled": t.enabled, "reason": t.reason, "source": t.source, "implemented": name in KINDS})
     return rows
+
+
+# The concrete kinds register themselves on import; they need everything above.
+from rlp_cli import quality

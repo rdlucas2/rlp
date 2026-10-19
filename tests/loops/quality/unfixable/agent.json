@@ -1,0 +1,23 @@
+[
+  {
+    "summary": "Attempt 1: moved the issue title into an environment variable in .github/workflows/triage.yml.",
+    "costUsd": 0.1,
+    "files": {
+      ".github/workflows/triage.yml": "name: triage\n# rewritten by the agent\n"
+    }
+  },
+  {
+    "summary": "Attempt 2: moved the issue title into an environment variable in .github/workflows/triage.yml.",
+    "costUsd": 0.1,
+    "files": {
+      ".github/workflows/triage.yml": "name: triage\n# rewritten by the agent\n"
+    }
+  },
+  {
+    "summary": "Attempt 3: moved the issue title into an environment variable in .github/workflows/triage.yml.",
+    "costUsd": 0.1,
+    "files": {
+      ".github/workflows/triage.yml": "name: triage\n# rewritten by the agent\n"
+    }
+  }
+]

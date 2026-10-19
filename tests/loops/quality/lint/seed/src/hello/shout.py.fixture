@@ -1,0 +1,7 @@
+"""Loud greetings."""
+
+from hello import greet
+
+
+def shout(name: str) -> str
+    return greet(name).upper()

@@ -1,0 +1,230 @@
+# The quality remediation loop (#48): one reusable workflow, called after a
+# failed golden run. It reruns the code-quality gates (lint, test, coverage,
+# sast), asks an agent to fix what they found with `rlp loop quality`, and
+# either opens a green PR labelled agent:authored or opens an escalation
+# issue. See docs/loops.md.
+#
+#   jobs:
+#     golden:
+#       uses: rdlucas2/rlp/.github/workflows/golden.yml@<rlp git ref>
+#       with: {rlp-version: "0.2.0"}
+#     quality-loop:
+#       needs: golden
+#       if: failure()
+#       uses: rdlucas2/rlp/.github/workflows/loop-quality.yml@<rlp git ref>
+#       with: {rlp-version: "0.2.0"}
+#       secrets:
+#         app-id: ${{ secrets.APP_ID }}
+#         app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+#         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+#
+# Nothing runs, and nothing is spent, unless loops are on: the job is skipped
+# when the RLP_LOOPS Actions variable is off, and every step after the toggle
+# check is skipped unless rlp.yaml sets loops.enabled: true (and lists quality
+# in loops.kinds, when it sets that).
+name: loop-quality
+
+on:
+  workflow_call:
+    inputs:
+      rlp-version:
+        description: "rlp-cli to install: a PyPI version (0.2.0), git:<ref> or path:<dir in this repo>"
+        type: string
+        required: true
+      working-directory:
+        description: Repo root of the project, relative to the checkout
+        type: string
+        default: "."
+      python-version:
+        description: Python used to run rlp
+        type: string
+        default: "3.13"
+      max-iterations:
+        description: Agent calls before the loop escalates
+        type: number
+        default: 3
+      max-spend:
+        description: Spend cap for the run in USD. Empty means loop_max_spend_usd from the policy bundle
+        type: string
+        default: ""
+      claude-code-version:
+        description: Claude Code CLI version the claude-code provider runs
+        type: string
+        default: "2.1.296"
+    secrets:
+      app-id:
+        description: The loop's GitHub App id (docs/loops.md#agent-identity)
+        required: false
+      app-private-key:
+        description: The loop's GitHub App private key
+        required: false
+      anthropic-api-key:
+        description: API key for the claude-code provider (or pass claude-code-oauth-token)
+        required: false
+      claude-code-oauth-token:
+        description: OAuth token for the claude-code provider, instead of an API key
+        required: false
+
+jobs:
+  quality:
+    # The kill switch: any off value of RLP_LOOPS skips the whole job.
+    if: ${{ !contains(fromJSON('["off", "0", "false", "no", "disabled"]'), vars.RLP_LOOPS || 'on') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The loop pushes and opens PRs and issues with the App's token, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    concurrency:
+      group: rlp-loop-quality-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RLP_SPEC: ${{ inputs.rlp-version }}
+      RLP_LOOPS: ${{ vars.RLP_LOOPS }}
+      # New code is measured from the same baseline the golden run used.
+      RLP_BASELINE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      SEMGREP_VERSION: "1.179.0"  # keep in step with golden.yml
+      UV_VERSION: "0.11.32"  # keep in step with golden.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # The loop branches off the branch that failed, and its PR targets it.
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0  # new-code checks diff against the baseline
+          persist-credentials: false  # push as the App, not as GITHUB_TOKEN
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install rlp
+        run: |
+          case "$RLP_SPEC" in
+            git:*) spec="rlp-cli @ git+https://github.com/rdlucas2/rlp@${RLP_SPEC#git:}" ;;
+            path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
+            *) spec="rlp-cli==${RLP_SPEC}" ;;
+          esac
+          python -m pip install --disable-pip-version-check "$spec" go-task-bin "uv==$UV_VERSION" "semgrep==$SEMGREP_VERSION"
+          rlp --version
+
+      - id: toggle
+        name: Is the quality loop on for this repo?
+        run: |
+          rlp loop status
+          enabled="$(rlp loop status --output json | jq -r '.loops[] | select(.loop == "quality") | .enabled')"
+          echo "enabled=${enabled}" >> "$GITHUB_OUTPUT"
+          if [ "$enabled" != "true" ]; then
+            echo "::notice::The quality loop is off for this repo; nothing to do."
+          fi
+
+      - name: Install Claude Code
+        if: steps.toggle.outputs.enabled == 'true'
+        env:
+          CLAUDE_CODE_VERSION: ${{ inputs.claude-code-version }}
+        run: |
+          npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          claude --version
+
+      # Discovery reads these results. Each gate runs on its own so every
+      # failure is recorded; a failure here is what the loop is for.
+      - name: Gates
+        if: steps.toggle.outputs.enabled == 'true'
+        run: |
+          rlp pipeline run --reset --stage setup
+          for stage in lint test coverage sast; do
+            rlp pipeline run --stage "$stage" || echo "::notice::${stage} failed; the loop will try to fix it"
+          done
+
+      # The agent identity (#51), as in .github/actions/agent-identity: a
+      # called workflow can't use a local action from the rlp repo, so the
+      # same two steps are inlined here.
+      - id: token
+        if: steps.toggle.outputs.enabled == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ secrets.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - id: identity
+        name: Commit as the App's bot user
+        if: steps.toggle.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SLUG: ${{ steps.token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          login="${SLUG}[bot]"
+          id="$(gh api "users/${SLUG}%5Bbot%5D" --jq .id)"
+          git config --global user.name "$login"
+          git config --global user.email "${id}+${login}@users.noreply.github.com"
+          gh auth setup-git --hostname github.com
+          echo "Committing and opening PRs as ${login}"
+
+      - id: loop
+        name: rlp loop quality
+        if: steps.toggle.outputs.enabled == 'true'
+        env:
+          RLP_AGENT_PROVIDER: claude-code
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic-api-key }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.claude-code-oauth-token }}
+          MAX_ITERATIONS: ${{ inputs.max-iterations }}
+          MAX_SPEND: ${{ inputs.max-spend }}
+        run: |
+          args=(--max-iterations "$MAX_ITERATIONS" --output json)
+          if [ -n "$MAX_SPEND" ]; then args+=(--max-spend "$MAX_SPEND"); fi
+          code=0
+          rlp loop quality "${args[@]}" > "$RUNNER_TEMP/loop.json" || code=$?
+          outcome="$(jq -r '.outcome // "error"' "$RUNNER_TEMP/loop.json")"
+          run_id="$(jq -r '.runId // ""' "$RUNNER_TEMP/loop.json")"
+          state=""
+          if [ -n "$run_id" ]; then state=".rlp/loops/quality-${run_id}.json"; fi
+          {
+            echo "outcome=${outcome}"
+            echo "state=${state}"
+            echo "branch=$(jq -r '.branch // ""' "$RUNNER_TEMP/loop.json")"
+          } >> "$GITHUB_OUTPUT"
+          echo "rlp loop quality: ${outcome} (exit ${code}): $(jq -r '.reason // .error // ""' "$RUNNER_TEMP/loop.json")"
+
+      # Only a fixed run gets here, and `rlp loop pr` refuses a state file
+      # whose verify stages weren't all green on the last commit.
+      - id: pr
+        name: Push the loop branch and open the PR
+        if: steps.toggle.outputs.enabled == 'true' && steps.loop.outputs.outcome == 'fixed'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BRANCH: ${{ steps.loop.outputs.branch }}
+          STATE: ${{ steps.loop.outputs.state }}
+        run: |
+          set -euo pipefail
+          rlp loop pr "$STATE" > /dev/null
+          git push origin "$BRANCH"
+          rlp loop pr "$STATE" --post
+
+      - id: escalate
+        name: Escalate to a human
+        if: >-
+          steps.toggle.outputs.enabled == 'true' &&
+          (steps.loop.outputs.outcome == 'escalated' || steps.loop.outputs.outcome == 'error')
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          STATE: ${{ steps.loop.outputs.state }}
+        run: |
+          if [ -z "$STATE" ]; then
+            reason="$(jq -r '.error // .reason // ""' "$RUNNER_TEMP/loop.json")"
+            echo "::error::rlp loop quality stopped before writing a state file: ${reason}"
+            exit 1
+          fi
+          rlp loop escalate "$STATE" --post
+
+      - name: Upload loop state
+        if: always() && steps.toggle.outputs.enabled == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: rlp-loop-quality
+          path: |
+            ${{ inputs.working-directory }}/.rlp/loops/
+            ${{ inputs.working-directory }}/.rlp/pipeline/results.json
+          if-no-files-found: warn
