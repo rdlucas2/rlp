@@ -1,0 +1,20 @@
+# A vulnerable base image: an OS package in python:3.13.0-slim with a fixed release.
+# The CVE and versions are illustrative; the fake trivy reports them while the
+# old tag is in the Dockerfile.
+description: The Dockerfile builds FROM python:3.13.0-slim, whose libexpat1 has a fixable CRITICAL CVE; a newer 3.13 tag fixes it.
+expect:
+  outcome: fixed
+  iterations: 1
+trivy:
+  - scan: image
+    file: Dockerfile
+    pattern: python:3.13.0-slim
+    target: "hello-api (debian 12.7)"
+    class: os-pkgs
+    vulnerability:
+      VulnerabilityID: CVE-2024-45491
+      PkgName: libexpat1
+      InstalledVersion: 2.5.0-1
+      FixedVersion: 2.5.0-1+deb12u1
+      Severity: CRITICAL
+      Title: "libexpat: Integer overflow or wraparound"

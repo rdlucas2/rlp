@@ -1,0 +1,18 @@
+# A fix that needs a major bump: the only release that fixes it is a new major version.
+description: requirements.txt pins pyjwt 1.7.1 (CVE-2022-29217, HIGH); the fix is 2.4.0, a major bump.
+expect:
+  outcome: escalated
+  iterations: 0
+trivy:
+  - scan: fs
+    file: requirements.txt
+    pattern: pyjwt==1.7.1
+    target: requirements.txt
+    class: lang-pkgs
+    vulnerability:
+      VulnerabilityID: CVE-2022-29217
+      PkgName: pyjwt
+      InstalledVersion: 1.7.1
+      FixedVersion: 2.4.0
+      Severity: HIGH
+      Title: "python-jwt: Key confusion through non-blocklisted public key formats"
