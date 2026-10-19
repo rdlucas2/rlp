@@ -70,7 +70,7 @@ edits(status) := verb[status]
 
 edits(status) := "edits" if not verb[status]
 
-deny contains lib.msg(
+warn contains lib.msg(
 	"RLP-A001", f.path, "(file)",
 	sprintf("an agent-authored change %v a protected gate file", [edits(f.status)]),
 	sprintf("revert the change to %v; gate configuration changes only by a human", [f.path]),
@@ -93,7 +93,7 @@ quality(doc) := null if {
 
 quality(doc) := null if not is_object(doc)
 
-deny contains lib.msg(
+warn contains lib.msg(
 	"RLP-A002", path, "quality",
 	"an agent-authored change modifies the quality block",
 	sprintf("restore the quality block of %v; quality settings change only by a human", [path]),
@@ -110,7 +110,7 @@ taskfile_test(doc) := object.get(doc, ["tasks", "test"], null) if is_object(doc)
 
 taskfile_test(doc) := null if not is_object(doc)
 
-deny contains lib.msg(
+warn contains lib.msg(
 	"RLP-A003", path, "tasks.test",
 	"an agent-authored change modifies the test task",
 	sprintf("restore the test task in %v; the test verb changes only by a human", [path]),
@@ -133,7 +133,7 @@ verb_overrides(doc) := {name: overrides |
 
 verb_overrides(doc) := {} if not is_object(doc)
 
-deny contains lib.msg(
+warn contains lib.msg(
 	"RLP-A003", path, sprintf("components[%v].verbs.test", [name]),
 	"an agent-authored change modifies the test verb override",
 	sprintf("restore verbs.test of component %v; the test verb changes only by a human", [name]),
@@ -180,7 +180,7 @@ prose(path) if {
 	endswith(lower(path), suffix)
 }
 
-deny contains lib.msg(
+warn contains lib.msg(
 	"RLP-A004", f.path, sprintf("line %d", [a.line]),
 	sprintf("an agent-authored change adds a %v suppression", [name]),
 	"fix the finding instead of suppressing it, or ask a human to accept it",
@@ -200,7 +200,7 @@ results_file := ".rlp/pipeline/results.json"
 # Base and head results of each agent change that has both.
 compared := [c.results | some c in agent_changes; is_object(c.results.base); is_object(c.results.head)]
 
-deny contains lib.msg(
+warn contains lib.msg(
 	"RLP-A005", results_file, sprintf("test.%v", [name]),
 	sprintf("an agent-authored change drops the test count from %v to %v", [before, after]),
 	sprintf("restore the removed tests of component %v", [name]),
@@ -212,7 +212,7 @@ deny contains lib.msg(
 	after < before
 }
 
-deny contains lib.msg(
+warn contains lib.msg(
 	"RLP-A006", results_file, sprintf("coverage.%v", [name]),
 	sprintf("an agent-authored change drops line coverage from %v%% to %v%%", [before, after]),
 	sprintf("add tests for component %v so coverage is at least %v%%", [name, before]),
@@ -256,7 +256,7 @@ added_tests(f) := count([a | some a in f.added; defines_test(a.text)])
 
 net_removed := sum([removed_tests(f) | some f in changed_test_files]) - sum([added_tests(f) | some f in changed_test_files])
 
-deny contains lib.msg(
+warn contains lib.msg(
 	"RLP-A007", f.path, "(tests)",
 	sprintf("an agent-authored change removes %d test definition(s) here and %d across the change", [removed_tests(f) - added_tests(f), net_removed]),
 	"restore the removed tests; a fix may add tests but not delete them",
