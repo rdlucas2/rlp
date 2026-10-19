@@ -124,13 +124,61 @@ jobs:
       - name: test
         run: rlp pipeline run --stage test --component "$RLP_COMPONENTS"
       - name: coverage
+        id: coverage
         run: rlp pipeline run --stage coverage --component "$RLP_COMPONENTS"
+      # The anti-cheat rules RLP-A005 and RLP-A006 (no drop in test count or
+      # line coverage, #72) compare this run's results with the base commit's.
+      # Pushes to the default branch keep their results.json in the Actions
+      # cache, which pull requests can read without an actions: read grant.
+      - name: Gate results cache key
+        id: results-key
+        if: >-
+          !cancelled() && github.event_name == 'pull_request' &&
+          (steps.coverage.outcome == 'success' || steps.coverage.outcome == 'failure')
+        env:
+          SCOPE: ${{ inputs.working-directory }}|${{ inputs.components }}
+        run: echo "scope=$(printf '%s' "$SCOPE" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Base commit's gate results
+        if: steps.results-key.outcome == 'success'
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ${{ runner.temp }}/rlp-base-results
+          key: rlp-gate-results-${{ steps.results-key.outputs.scope }}-${{ github.event.pull_request.base.sha }}
+      - name: policy (test count and coverage)
+        if: steps.results-key.outcome == 'success'
+        run: |
+          base="$RUNNER_TEMP/rlp-base-results/results.json"
+          if [ -f "$base" ]; then
+            export RLP_BASE_RESULTS="$base"
+          else
+            echo "::notice::no gate results cached for base commit ${BASE_SHA:0:12}, so RLP-A005 and RLP-A006 are skipped"
+          fi
+          rlp pipeline run --stage policy --component "$RLP_COMPONENTS"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
       - name: sast
         run: rlp pipeline run --stage sast --component "$RLP_COMPONENTS"
       - name: package
         run: rlp pipeline run --stage package --component "$RLP_COMPONENTS"
       - name: trivy
         run: rlp pipeline run --stage trivy --component "$RLP_COMPONENTS"
+      - name: Keep the gate results for pull requests
+        id: keep-results
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          SCOPE: ${{ inputs.working-directory }}|${{ inputs.components }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/rlp-base-results"
+          cp .rlp/pipeline/results.json "$RUNNER_TEMP/rlp-base-results/results.json"
+          echo "scope=$(printf '%s' "$SCOPE" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Cache the gate results
+        if: steps.keep-results.outcome == 'success'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ${{ runner.temp }}/rlp-base-results
+          key: rlp-gate-results-${{ steps.keep-results.outputs.scope }}-${{ github.sha }}
       - name: Gate summary
         if: always()
         run: |
