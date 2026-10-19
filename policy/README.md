@@ -82,7 +82,7 @@ For example: `[RLP-X003] rlp.yaml components[0].config[0].from: refers to servic
 
 ## Agent-authored changes
 
-"Verifiers the agent can't edit" (docs/PLAN.md): the `rlp.agent` rules fail an agent-authored pull request that weakens a gate. A change is agent-authored when it carries the `agent:authored` label or its author is in `agent_authors` in `platform/data.yaml` (the agent identity, #51, adds its login there). The same change from a human passes these rules.
+"Verifiers the agent can't change without sign-off" (docs/PLAN.md): the `rlp.agent` rules flag an agent-authored pull request that changes a gate. They are conftest `warn` rules, not `deny` rules, so an agent can make a gate change an issue calls for (removing a flaky test, say), and a human reviews each one before merge (#73). `rlp policy check` prints them as warnings and exits 0 when they are its only findings; the policy stage records them in `results.json` under `data.gate_changes`, and `rlp pipeline summary` lists them under "Gate changes needing review". The A-rule rows in the table above describe what each rule checks; a breach is a warning, not a failure. A change is agent-authored when it carries the `agent:authored` label or its author is in `agent_authors` in `platform/data.yaml` (the agent identity, #51, adds its login there). The same change from a human passes these rules.
 
 The rules don't read repo files. `rlp policy check` and the policy stage add one more document to conftest's input, `rlp_change` (built by `cli/src/rlp_cli/change.py`):
 

@@ -44,7 +44,7 @@ A change with no measured lines, such as docs or tests only, passes.
 
 **What fails.** An ERROR or WARNING finding that is new since the baseline.
 
-**Suppressions.** A `# nosemgrep` comment silences one finding. Like VEX exceptions, suppressions are quality-gate configuration, and agent-authored changes may not add them.
+**Suppressions.** A `# nosemgrep` comment silences one finding. Like VEX exceptions, suppressions are quality-gate configuration: an agent-authored change that adds one is flagged as a gate change for a human to review (RLP-A004, see [policy/README.md](../policy/README.md)).
 
 **Licences and limits.**
 

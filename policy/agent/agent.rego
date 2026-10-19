@@ -1,6 +1,8 @@
-# Anti-cheat rules: an agent-authored change may not weaken a gate (#50).
+# Anti-cheat rules: flag an agent-authored change that touches a gate (#50).
 #
-# "Verifiers the agent can't edit" (docs/PLAN.md). These rules read the
+# "Verifiers the agent can't change without sign-off" (docs/PLAN.md). The rules
+# are warn rules: they never fail the policy stage on their own; the stage
+# records them as data.gate_changes for a human to review (#73). They read the
 # rlp_change document that `rlp policy check` adds to conftest's combined input
 # (cli/src/rlp_cli/change.py): the PR author and labels, the files changed since
 # the baseline commit with their added and removed lines, rlp.yaml and Taskfiles
