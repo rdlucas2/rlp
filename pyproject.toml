@@ -30,6 +30,8 @@ dependencies = [
 test = [
     "coverage==7.16.2",
     "pytest==9.1.1",
+    # The vuln loop's seeded uv case runs the real uv lock and uv sync (#80); keep in step with UV_VERSION in golden.yml.
+    "uv==0.11.32",
 ]
 
 [project.scripts]

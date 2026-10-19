@@ -1,0 +1,9 @@
+[
+  {
+    "summary": "Raised the cryptography pin in pyproject.toml from 42.0.0 to 42.0.4; the loop regenerates uv.lock.",
+    "costUsd": 0.09,
+    "files": {
+      "pyproject.toml": "[project]\nname = \"hello\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"cryptography==42.0.4\"]\n\n# The tests build stand-in wheels into wheels/ and resolve from there only, so\n# uv lock and uv sync need no network.\n[tool.uv]\npackage = false\nno-index = true\nfind-links = [\"wheels\"]\n"
+    }
+  }
+]
