@@ -171,7 +171,15 @@ Each finding is a fixable HIGH or CRITICAL vulnerability that no unexpired `.rlp
 - Before the first agent call, a finding in a direct dependency whose every fixed version is on a new major version (installed 1.7.1, fixed in 2.4.0) escalates the run. Nothing is spent.
 - After the verify stages pass, the loop compares the branch with its base. If a direct dependency's pin (in a requirements file, `pyproject.toml`, `package.json`, or a lockfile entry for a declared package) or a Dockerfile's `FROM` tag moved to a new major version, the run escalates instead of ending `fixed`.
 
-A direct dependency is one a requirements file, `pyproject.toml` or `package.json` declares. A transitive package's major bump in a lockfile doesn't escalate by itself. The agent can't run commands, so it edits lockfiles by hand; a lockfile it can't update consistently fails the `setup` stage and the loop tries again or escalates.
+A direct dependency is one a requirements file, `pyproject.toml` or `package.json` declares. A transitive package's major bump in a lockfile doesn't escalate by itself.
+
+**Lockfiles are regenerated, not hand-edited.** The agent can't run commands, so after a kept attempt that changed a dependency manifest at a component's root, the loop runs that component's lock command itself, in the component's directory, before committing:
+
+- The command is the component's `lock` in `rlp.yaml`, for example `lock: uv lock`. When it is absent, a tracked `uv.lock` beside the manifests means `uv lock`; otherwise nothing runs and a lockfile the agent can't keep consistent fails the `setup` stage.
+- The regenerated lockfile goes into the iteration's commit, so the major-bump check above reads it: a lock that moves a direct dependency to a new major version escalates.
+- A lock command that fails, or that changes a file outside the allowed paths, throws the attempt away; its output goes into the next prompt, as for any rejected attempt.
+- The prompt tells the agent which lock command runs, so it raises the pin in the manifest (for example `cryptography==42.0.4` in `pyproject.toml`) rather than editing the lockfile.
+- Each iteration's state records what ran under `afterAttempt`: the component, the command, its exit code and the files it changed.
 
 **In CI**, call the reusable [`loop-vuln.yml`](../.github/workflows/loop-vuln.yml) workflow after a failed golden run, and on a schedule so a CVE published against unchanged code is caught too:
 
@@ -196,7 +204,7 @@ jobs:
 
 It takes the same inputs and secrets as `loop-quality.yml` and honours the same toggle: the job is skipped when `RLP_LOOPS` is off, and every step after the toggle check is skipped unless `rlp.yaml` turns the vuln loop on. A `fixed` run pushes its branch and opens a PR labelled `agent:authored` and `loop:vuln` as the [agent identity](#agent-identity); an `escalated` or `error` run opens an [escalation issue](#escalation). The state file and gate results are uploaded as the `rlp-loop-vuln` artifact.
 
-Seeded cases (a vulnerable pinned package with a patch release, a vulnerable base image, and a fix that needs a major bump) are in [`tests/loops/vuln/`](../tests/loops/vuln/README.md).
+Seeded cases (a vulnerable pinned package with a patch release, the same in a `uv` project whose `uv.lock` the loop regenerates, a vulnerable base image, and a fix that needs a major bump) are in [`tests/loops/vuln/`](../tests/loops/vuln/README.md).
 
 ## Escalation
 
