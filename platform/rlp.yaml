@@ -7,7 +7,7 @@ metadata:
   description: FastAPI service rendered from the rlp python-fastapi template.
   template:
     source: "gh:rdlucas2/rlp-template-python-fastapi"
-    version: "e8fd5cc"
+    version: "d5f0037"
 components:
   - name: platform
     path: .

@@ -1,6 +1,7 @@
 # Changes here will be overwritten by Copier; update with: rlp update
-_commit: e8fd5cc
+_commit: d5f0037
 _src_path: gh:rdlucas2/rlp-template-python-fastapi
+code_owners: '@rdlucas2'
 component_name: platform
 coverage_minimum: 80
 port: 8000
