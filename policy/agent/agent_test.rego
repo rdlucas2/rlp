@@ -29,14 +29,14 @@ test_no_change_document_passes if {
 
 test_clean_agent_change_passes if {
 	c := {"files": [file("src/app.py", ["def handler():", "    return 1"]), file("tests/test_app.py", ["def test_handler():"])]}
-	count() == 0 with input as with_change(c)
+	count(agent.warn) == 0 with input as with_change(c)
 }
 
 # --- A001 ---
 
 test_a001_policy_bundle_edit if {
 	c := {"files": [file("policy/lib/lib.rego", ["x := 1"])]}
-	some m in  with input as with_change(c)
+	some m in agent.warn with input as with_change(c)
 	m == "[RLP-A001] policy/lib/lib.rego (file): an agent-authored change edits a protected gate file. Fix: revert the change to policy/lib/lib.rego; gate configuration changes only by a human."
 }
 
@@ -46,7 +46,7 @@ test_a001_every_protected_path if {
 		"svc/.pre-commit-config.yaml", ".semgrepignore", ".semgrep/rules.yml", "trivy.yaml", ".trivyignore", ".coveragerc",
 	]
 	c := {"files": [file(p, []) | some p in paths]}
-	denied :=  with input as with_change(c)
+	denied := agent.warn with input as with_change(c)
 	count(denied) == count(paths)
 	ids(denied) == {"RLP-A001"}
 }
