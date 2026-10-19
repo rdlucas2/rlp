@@ -49,7 +49,7 @@ Both caps must be positive.
 | `escalated` | 1 | The iteration cap or the spend cap was reached with the gate still failing |
 | `error` | 2 | The loop couldn't start or continue: bad options, a dirty work tree, missing credentials, a git or agent failure |
 
-Opening the PR or the escalation issue is a separate step (#52).
+Opening the PR or the escalation issue is a separate step (#52), done as the loop's [agent identity](#agent-identity).
 
 ### State
 
@@ -65,6 +65,40 @@ A kind is a `rlp_cli.loop.LoopKind` registered with `loop.register()`:
 - `build_prompt(PromptInput)` is optional; without it the runner's default prompt lists the findings and the failing gate output.
 
 Add the kind's name to `KNOWN_KINDS` in `loop.py` and to the `loops.kinds` enum in `schemas/v1alpha1/repo.schema.json`.
+
+## Agent identity
+
+Loop commits and PRs are made by a dedicated GitHub App, **localrlp**, not by a person or by `GITHUB_TOKEN`. That makes agent changes easy to tell apart: the PR author is `localrlp[bot]`, which `agent_authors` in [`policy/platform/data.yaml`](../policy/platform/data.yaml) lists, so the `rlp.agent` anti-cheat rules judge its PRs as agent-authored even without the `agent:authored` label. Pushes made with an App token also trigger the PR's checks, which pushes made with `GITHUB_TOKEN` don't.
+
+| Setting | Value |
+| --- | --- |
+| App | `localrlp`, installed on the rlp repos with `contents`, `pull-requests` and `issues` write |
+| Bot login | `localrlp[bot]` |
+| Secrets | `APP_ID` and `APP_PRIVATE_KEY`, as repository secrets |
+
+A loop workflow gets the identity from the [`agent-identity`](../.github/actions/agent-identity/action.yml) composite action. It mints a short-lived installation token, scoped to those three permissions and revoked when the job ends, and sets git to commit as the bot user. Git authenticates through `gh`, so every step that pushes or calls the API sets `GH_TOKEN` to the action's `token` output:
+
+```yaml
+- uses: actions/checkout@<sha>
+  with:
+    persist-credentials: false  # else pushes go out as GITHUB_TOKEN
+- id: agent
+  uses: ./.github/actions/agent-identity
+  with:
+    app-id: ${{ secrets.APP_ID }}
+    private-key: ${{ secrets.APP_PRIVATE_KEY }}
+- run: |
+    git push origin "$BRANCH"
+    gh api "repos/$GITHUB_REPOSITORY/pulls" -f head="$BRANCH" -f base=main -f title="..."
+  env:
+    GH_TOKEN: ${{ steps.agent.outputs.token }}
+```
+
+Outputs: `token`, `login` (`localrlp[bot]`) and `email` (the bot's noreply address). To reach another rlp repo, such as a template repo, pass `repositories: rlp-template-python-fastapi`; the App must be installed there.
+
+**Checking it.** The `agent-identity` workflow runs the action by hand (Actions, agent-identity, Run workflow). It pushes a throwaway branch, opens a draft PR labelled `agent:authored`, fails unless GitHub shows `localrlp[bot]` as the author of both the commit and the PR, then closes the PR and deletes the branch. Tick **keep-open** to leave them for inspection.
+
+**Rotating the key.** Generate a new private key in the App's settings, replace `APP_PRIVATE_KEY`, run the `agent-identity` workflow, then delete the old key. Renaming the App changes its bot login: update `agent_authors` in the same PR.
 
 ## The provider interface
 
