@@ -72,6 +72,13 @@ test_a001_listed_agent_author_without_label if {
 	ids(agent.warn) == {"RLP-A001"} with input as with_change(c) with data.platform.agent_authors as ["rlp-agent[bot]"]
 }
 
+# The platform data names the loop's GitHub App (#51), so its PRs are judged
+# as agent-authored even without the label.
+test_a001_loop_app_without_label if {
+	c := {"labels": [], "author": "localrlp[bot]", "files": [file("policy/lib/lib.rego", [])]}
+	ids(agent.warn) == {"RLP-A001"} with input as with_change(c)
+}
+
 # --- A002 ---
 
 test_a002_lowered_coverage_minimum if {
