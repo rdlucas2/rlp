@@ -16,7 +16,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, infra, loop, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, infra, loop, loop_pr, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -513,7 +513,7 @@ def make_loop_command(kind: str) -> click.Command:
 
 
 class LoopGroup(click.Group):
-    """`rlp loop status` and `rlp loop escalate`, plus one subcommand per loop kind, read from the registry when called."""
+    """`rlp loop status`, `rlp loop escalate` and `rlp loop pr`, plus one subcommand per loop kind, read from the registry when called."""
 
     def list_commands(self, ctx: click.Context) -> list[str]:
         return sorted({*super().list_commands(ctx), *loop.kind_names()})
@@ -573,6 +573,41 @@ def loop_escalate(ctx: click.Context, state_file: Path, post: bool, repo: str | 
             posted = escalate.post(escalate.client_from_env(), target, state, link, shown)
             payload |= {"repo": target, **posted.as_dict()}
     except escalate.EscalationError as err:
+        fail(ctx, str(err))
+    if json_mode:
+        emit_json(payload)
+    elif post:
+        click.echo(f"{posted.action} {target}#{posted.number}: {posted.url}")
+    else:
+        click.echo(payload["body"], nl=False)
+
+
+@loop_group.command(name="pr")
+@click.argument("state_file", type=click.Path(path_type=Path, dir_okay=False))
+@click.option("--post", is_flag=True, help="Open the pull request from the loop branch into its base on GitHub. Push the branch first.")
+@click.option("--repo", default=None, help="OWNER/NAME to post to. Default: $GITHUB_REPOSITORY.")
+@click.option("--trigger", default=None, help="Link to the run that started the loop. Default: this GitHub Actions run, when there is one.")
+@output_option
+@click.pass_context
+def loop_pull_request(ctx: click.Context, state_file: Path, post: bool, repo: str | None, trigger: str | None) -> None:
+    """Render the pull request for a loop run that fixed its gate, from its STATE_FILE.
+
+    Only a fixed run whose verify stages all passed on its last commit can
+    open one. Without --post, prints the PR's Markdown. With --post, opens the
+    PR from the loop branch into the base branch and labels it agent:authored
+    and loop:<kind>. Posting reads the token from GH_TOKEN, else GITHUB_TOKEN.
+    """
+    json_mode = ctx.obj["output"] == "json"
+    try:
+        state = loop_pr.load_fixed(state_file)
+        link = escalate.trigger_url() if trigger is None else trigger
+        payload = {"ok": True, "title": loop_pr.title(state), "head": state["branch"], "base": state["base"],
+                   "labels": loop_pr.labels(state), "body": loop_pr.render(state, link)}
+        if post:
+            target = escalate.repo_from_env(repo)
+            posted = loop_pr.post(escalate.client_from_env(), target, state, link)
+            payload |= {"repo": target, **posted.as_dict()}
+    except (loop_pr.PullRequestError, escalate.EscalationError) as err:
         fail(ctx, str(err))
     if json_mode:
         emit_json(payload)

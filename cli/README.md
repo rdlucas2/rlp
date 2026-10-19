@@ -52,6 +52,7 @@ Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git
 | `rlp loop KIND [--max-iterations N] [--max-spend USD] [--dry-run]` | Run a remediation loop: an agent fixes what a gate found, on a branch, until the gate passes or a cap is hit. Off unless `rlp.yaml` sets `loops.enabled: true`; exits 0 fixed, 1 escalated, 2 error ([docs/loops.md](../docs/loops.md)) |
 | `rlp loop status` | Show whether each loop kind is on for the repo, and why |
 | `rlp loop escalate STATE_FILE [--post]` | Render the escalation issue for a loop that gave up; with `--post`, open it on GitHub or comment on the open one |
+| `rlp loop pr STATE_FILE [--post]` | Render the pull request for a loop run that fixed its gate; with `--post`, open it from the loop branch and label it `agent:authored` |
 | `rlp pipeline stages\|run\|summary` | Run the golden pipeline's gates locally, exactly as CI does ([docs/pipeline.md](../docs/pipeline.md)) |
 
 Verb overrides are split with POSIX shell rules on every OS and run without a shell: no pipes, globs or variable expansion. Put anything more complex in a Taskfile task. Write paths with forward slashes.
