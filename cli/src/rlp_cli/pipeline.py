@@ -99,10 +99,26 @@ def stage_validate(ctx: Context) -> StageResult:
     return StageResult("validate", "passed", ", ".join(f.name for f in files) + " valid")
 
 
+def results_note(doc: dict) -> str:
+    """What the test-count and coverage rules (RLP-A005, RLP-A006) could compare.
+
+    Before the test stage there are no head results, and the rules wait for the
+    second policy run the golden pipeline makes after coverage; that's no news.
+    After it, say whether a base results.json was there to compare against.
+    """
+    results = doc[change.KEY]["results"]
+    if results["head"] is None:
+        return ""
+    if results["base"] is None:
+        return f"no base results (${change.BASE_RESULTS_ENV}), so the test-count and coverage rules were skipped"
+    return "test count and coverage compared with the base results"
+
+
 def stage_policy(ctx: Context) -> StageResult:
-    report = policy.check(ctx.root, change=change.build(ctx.root))
+    doc = change.build(ctx.root)
+    report = policy.check(ctx.root, change=doc)
     data: dict = {}
-    notes = []
+    notes = [note] if (note := results_note(doc)) else []
     if report.warnings:
         # Agent-authored gate changes (rlp.agent): they don't fail the stage, but a human reviews each one (#73).
         data["gate_changes"] = [w.as_dict() for w in report.warnings]
