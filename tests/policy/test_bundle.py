@@ -3,8 +3,9 @@
 Each case in cases.yaml is a small repo. The check is the same one
 `rlp policy check` will run: conftest --combine from the repo root with the
 bundle in policy/ as policy and data. A case passes when the set of rule ids
-in the failures equals its `expect` list exactly, so an invalid fixture fails
-its own rule and nothing else.
+in the failures equals its `expect` list exactly and the set in the warnings
+equals its `warn` list exactly, so an invalid fixture trips its own rule and
+nothing else.
 
 Fixture files that conftest would parse on its own (Dockerfiles, Terraform plan
 JSON) are stored under other names, so `rlp policy check` on the rlp repo
@@ -54,7 +55,7 @@ def tool(name: str) -> str:
     return found
 
 
-def conftest(repo: Path, namespaces: list[str] | None) -> list[str]:
+def conftest(repo: Path, namespaces: list[str] | None) -> tuple[list[str], list[str]]:
     args = [tool("conftest"), "test", "--combine", "--no-color", "--output", "json"]
     args += ["--policy", str(POLICY), "--data", str(POLICY)]
     if namespaces:
@@ -67,7 +68,9 @@ def conftest(repo: Path, namespaces: list[str] | None) -> list[str]:
     assert result.returncode in (0, 1), result.stderr or result.stdout
     report = json.loads(result.stdout)
     assert not any(r.get("exceptions") for r in report), report
-    return [f["msg"] for r in report for f in (r.get("failures") or [])]
+    failures = [f["msg"] for r in report for f in (r.get("failures") or [])]
+    warnings = [w["msg"] for r in report for w in (r.get("warnings") or [])]
+    return failures, warnings
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
@@ -81,10 +84,11 @@ def test_case(name: str, tmp_path: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / src, target)
 
-    messages = conftest(repo, case.get("namespaces"))
+    failures, warnings = conftest(repo, case.get("namespaces"))
 
-    assert {RULE_ID.search(m).group(0) for m in messages} == set(case["expect"]), messages
-    for m in messages:
+    assert {RULE_ID.search(m).group(0) for m in failures} == set(case["expect"]), failures
+    assert {RULE_ID.search(m).group(0) for m in warnings} == set(case.get("warn") or []), warnings
+    for m in failures + warnings:
         assert MESSAGE.match(m), f"message does not name file, field and fix: {m}"
 
 
@@ -103,13 +107,13 @@ def test_every_rule_has_a_failing_fixture() -> None:
         if not path.name.endswith("_test.rego")
         for rule in RULE_ID.findall(path.read_text(encoding="utf-8"))
     }
-    covered = {rule for case in CASES.values() for rule in case["expect"]}
+    covered = {rule for case in CASES.values() for rule in [*case["expect"], *(case.get("warn") or [])]}
     assert defined, "no rule ids found in policy/"
     assert defined == covered
 
 
 def test_valid_examples_are_covered() -> None:
-    copied = {src for case in CASES.values() if not case["expect"] for src in (case.get("copy") or {}).values()}
+    copied = {src for case in CASES.values() if not case["expect"] and not case.get("warn") for src in (case.get("copy") or {}).values()}
     assert {"examples/rlp.yaml", "examples/rlp-template.yaml"} <= copied
 
 

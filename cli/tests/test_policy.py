@@ -35,6 +35,33 @@ def test_each_invalid_fixture_fails_its_rule(rlp, copy_fixture):
         assert {v["rule"] for v in result.json["violations"]} == set(case["expect"]), name
 
 
+def test_each_warning_fixture_warns_and_passes(rlp, copy_fixture):
+    warned = 0
+    for name, case in CASES.items():
+        if not case.get("warn"):
+            continue
+        repo = copy_fixture(POLICY_FIXTURES / name)
+        args = ["policy", "check", str(repo), "-o", "json"]
+        for ns in case.get("namespaces") or []:
+            args += ["--namespace", ns]
+        result = rlp(*args)
+        assert result.code == 0, (name, result.stdout, result.stderr)
+        assert result.json["violations"] == [], name
+        assert {w["rule"] for w in result.json["warnings"]} == set(case["warn"]), name
+        warned += 1
+    assert warned
+
+
+def test_warnings_are_printed(rlp, copy_fixture):
+    name = next(n for n, c in CASES.items() if c.get("warn"))
+    repo = copy_fixture(POLICY_FIXTURES / name)
+    result = rlp("policy", "check", str(repo), "--namespace", "rlp.agent")
+    assert result.code == 0, result.stdout + result.stderr
+    assert f"warning: [{CASES[name]['warn'][0]}]" in result.stdout
+    assert "gate changes needing review" in result.stdout
+    assert "no violations" in result.stdout
+
+
 def test_json_violation_fields(rlp, copy_fixture):
     repo = copy_fixture(POLICY_FIXTURES / "x003-unknown-service")
     result = rlp("policy", "check", str(repo), "-o", "json")

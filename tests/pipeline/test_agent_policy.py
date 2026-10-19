@@ -1,5 +1,9 @@
 """The rlp.agent anti-cheat rules (#50), on agent PR fixtures.
 
+The rules warn rather than fail: an agent-authored gate change passes the
+policy stage, is recorded under the stage's data.gate_changes, and is listed in
+the pipeline summary for a human to review (#73).
+
 Each test copies the hello fixture into a git repo, commits it as the baseline,
 makes one change as a PR would, and runs the policy stage with RLP_BASELINE set.
 RLP_PR_LABELS stands in for the pull request's labels: agent:authored marks the
@@ -42,7 +46,14 @@ def policy_stage(repo: Path, base: str, who: dict) -> tuple[int, dict]:
 
 
 def rules(stage: dict) -> set[str]:
-    return {v["rule"] for v in stage["data"].get("violations", [])}
+    """Rule ids of the gate changes the policy stage recorded."""
+    return {v["rule"] for v in stage["data"].get("gate_changes", [])}
+
+
+def warned(proc) -> set[str]:
+    report = json.loads(proc.stdout)
+    assert report["violations"] == [], report
+    return {w["rule"] for w in report["warnings"]}
 
 
 def add_nosemgrep(repo: Path) -> None:
@@ -74,14 +85,25 @@ CHANGES = {
 
 
 @pytest.mark.parametrize("name", CHANGES)
-def test_agent_change_fails_the_policy_stage(repo, name):
+def test_agent_change_is_recorded_as_a_gate_change(repo, name):
     make, expected = CHANGES[name]
     base = head(repo)
     make(repo)
     code, stage = policy_stage(repo, base, AGENT)
-    assert code == 1, stage
-    assert stage["status"] == "failed"
+    assert code == 0, stage
+    assert stage["status"] == "passed"
+    assert "violations" not in stage["data"]
     assert rules(stage) == expected
+    assert "gate change(s) needing review" in stage["detail"]
+
+
+def test_summary_lists_gate_changes(repo):
+    base = head(repo)
+    add_nosemgrep(repo)
+    policy_stage(repo, base, AGENT)
+    out = rlp(repo, "pipeline", "summary").stdout
+    assert "### Gate changes needing review" in out
+    assert "- [RLP-A004] " in out
 
 
 @pytest.mark.parametrize("name", CHANGES)
@@ -92,6 +114,7 @@ def test_same_change_from_a_human_passes(repo, name):
     code, stage = policy_stage(repo, base, HUMAN)
     assert code == 0, stage
     assert stage["status"] == "passed"
+    assert rules(stage) == set()
 
 
 def test_clean_agent_change_passes(repo):
@@ -100,13 +123,14 @@ def test_clean_agent_change_passes(repo):
     commit(repo, "add a note")
     code, stage = policy_stage(repo, base, AGENT)
     assert code == 0, stage
+    assert rules(stage) == set()
 
 
 def test_uncommitted_and_untracked_changes_count(repo):
     base = head(repo)
     (repo / "src" / "extra.py").write_text("X = 1  # noqa\n", encoding="utf-8")
     code, stage = policy_stage(repo, base, AGENT)
-    assert code == 1
+    assert code == 0, stage
     assert rules(stage) == {"RLP-A004"}
 
 
@@ -116,8 +140,8 @@ def test_labels_come_from_the_github_event(repo, tmp_path):
     event = tmp_path / "event.json"
     event.write_text(json.dumps({"pull_request": {"user": {"login": "someone"}, "labels": [{"name": "agent:authored"}]}}), encoding="utf-8")
     proc = rlp(repo, "policy", "check", ".", "-o", "json", extra_env={"RLP_BASELINE": base, "GITHUB_EVENT_PATH": str(event)})
-    assert proc.returncode == 1, proc.stderr
-    assert {v["rule"] for v in json.loads(proc.stdout)["violations"]} == {"RLP-A004"}
+    assert proc.returncode == 0, proc.stderr
+    assert warned(proc) == {"RLP-A004"}
 
 
 def results(tests: int, percent: float) -> list[dict]:
@@ -127,15 +151,17 @@ def results(tests: int, percent: float) -> list[dict]:
     ]
 
 
-def test_test_count_and_coverage_drop_fail(repo, tmp_path):
+def test_test_count_and_coverage_drop_warn(repo, tmp_path):
     base_file, head_file = tmp_path / "base.json", tmp_path / "head.json"
     base_file.write_text(json.dumps(results(5, 92.0)), encoding="utf-8")
     head_file.write_text(json.dumps(results(4, 88.5)), encoding="utf-8")
     args = ["policy", "check", ".", "-o", "json", "--base-results", str(base_file), "--head-results", str(head_file)]
     proc = rlp(repo, *args, extra_env={"RLP_BASELINE": head(repo), **AGENT})
-    assert proc.returncode == 1, proc.stderr
-    assert {v["rule"] for v in json.loads(proc.stdout)["violations"]} == {"RLP-A005", "RLP-A006"}
-    assert rlp(repo, *args, extra_env={"RLP_BASELINE": head(repo), **HUMAN}).returncode == 0
+    assert proc.returncode == 0, proc.stderr
+    assert warned(proc) == {"RLP-A005", "RLP-A006"}
+    human = rlp(repo, *args, extra_env={"RLP_BASELINE": head(repo), **HUMAN})
+    assert human.returncode == 0
+    assert warned(human) == set()
 
 
 def test_test_stage_records_test_counts(repo):
@@ -146,15 +172,15 @@ def test_test_stage_records_test_counts(repo):
     assert tests["api"] > 0
 
 
-def test_deleted_test_file_and_gate_file_fail(repo):
+def test_deleted_test_file_and_gate_file_warn(repo):
     base = head(repo)
     (repo / "tests" / "test_greet.py").unlink()
     (repo / ".coveragerc").unlink()
     commit(repo, "delete the tests and the coverage settings")
     code, stage = policy_stage(repo, base, AGENT)
-    assert code == 1
+    assert code == 0, stage
     assert rules(stage) == {"RLP-A001", "RLP-A007"}
-    assert any("deletes a protected gate file" in v["message"] for v in stage["data"]["violations"])
+    assert any("deletes a protected gate file" in v["message"] for v in stage["data"]["gate_changes"])
 
 
 def test_project_in_a_subdirectory_is_judged_on_its_own_files(tmp_path):
@@ -170,7 +196,8 @@ def test_project_in_a_subdirectory_is_judged_on_its_own_files(tmp_path):
     project = mono / "apps" / "hello"
     code, stage = policy_stage(project, base, AGENT)
     assert code == 0, stage
+    assert rules(stage) == set()
     lower_minimum(project)
     code, stage = policy_stage(project, base, AGENT)
-    assert code == 1
+    assert code == 0, stage
     assert rules(stage) == {"RLP-A002"}
