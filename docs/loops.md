@@ -1,6 +1,6 @@
 # Remediation loops
 
-A remediation loop reads a failing gate, asks an agent to fix the code, reruns the gate and opens a PR only when it passes. This page covers the pieces every loop shares: the **on/off toggle**, the **loop runner** (`rlp loop <kind>`) and the **agent provider**, the interface a loop uses to ask an agent for a change. The individual loops build on them: [the quality loop](#the-quality-loop) (#48) and the vulnerability loop (#49).
+A remediation loop reads a failing gate, asks an agent to fix the code, reruns the gate and opens a PR only when it passes. This page covers the pieces every loop shares: the **on/off toggle**, the **loop runner** (`rlp loop <kind>`) and the **agent provider**, the interface a loop uses to ask an agent for a change. The individual loops build on them: [the quality loop](#the-quality-loop) (#48) and [the vulnerability loop](#the-vulnerability-loop) (#49).
 
 ## Turning loops on and off
 
@@ -29,8 +29,10 @@ One run goes:
 1. **Discover.** The kind lists its findings. None: outcome `no-findings`, nothing else happens.
 2. **Branch.** The runner refuses a work tree with uncommitted changes to tracked files, then creates `rlp/loop/<kind>/<run-id>` from the current branch. It never commits to the base branch, and checks the base branch out again when the run ends.
 3. **Act.** One agent call in a fresh context. The prompt is rebuilt every iteration from the current findings and the last verification's output; no conversation carries over. The agent may change only the kind's allowed paths.
-4. **Verify.** The kind's golden pipeline stages run, as `rlp pipeline run -s <stage>` would. An attempt that changed anything outside the allowed paths is thrown away first (tracked files restored, new files deleted) and the next prompt says why. A kept attempt is committed to the loop branch.
+4. **Verify.** The kind's golden pipeline stages run, as `rlp pipeline run -s <stage>` would. An attempt that changed anything outside the allowed paths, or any of the kind's guarded files, is thrown away first (tracked files restored, new files deleted, guarded files put back byte for byte) and the next prompt says why. A kept attempt is committed to the loop branch.
 5. **Iterate** until the verify stages pass, or a cap is hit.
+
+A kind can also hand a run to a human: before the first agent call (its `preflight` hook, for example a fix that needs a major-version bump), or after the verify stages pass (its `review` hook, for a change a human must decide on). Either ends the run `escalated`, so no PR opens.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -46,7 +48,7 @@ Both caps must be positive.
 | `fixed` | 0 | The verify stages passed |
 | `no-findings` | 0 | Discovery found nothing to fix |
 | `disabled` | 0 | Loops are off for this repo or kind |
-| `escalated` | 1 | The iteration cap or the spend cap was reached with the gate still failing |
+| `escalated` | 1 | The iteration cap or the spend cap was reached with the gate still failing, or the kind's `preflight` or `review` hook handed the run to a human |
 | `error` | 2 | The loop couldn't start or continue: bad options, a dirty work tree, missing credentials, a git or agent failure |
 
 Opening the PR is a separate step, done as the loop's [agent identity](#agent-identity). An `escalated` or `error` run hands over to a human through an [escalation issue](#escalation).
@@ -63,6 +65,9 @@ A kind is a `rlp_cli.loop.LoopKind` registered with `loop.register()`:
 - `verify_stages` names the golden pipeline stages that must pass.
 - `allowed_paths(root, doc)` returns the paths the agent may change. Quality config, suppressions and exception files are never among them.
 - `build_prompt(PromptInput)` is optional; without it the runner's default prompt lists the findings and the failing gate output.
+- `preflight(root, doc, findings)` is optional: a non-empty reason escalates the run before any agent call.
+- `review(root, base)` is optional: called once the verify stages pass, with the loop branch checked out; a non-empty reason escalates the run instead of ending it `fixed`.
+- `guarded` is optional: files an attempt must leave exactly as they were, checked by content even where git ignores them (exception files the gate reads, for example). A changed one is put back and the attempt is thrown away.
 
 Add the kind's name to `KNOWN_KINDS` in `loop.py` and to the `loops.kinds` enum in `schemas/v1alpha1/repo.schema.json`.
 
@@ -126,6 +131,62 @@ The job is skipped when the `RLP_LOOPS` variable is off, and every step after th
 | `claude-code-version` | pinned | The Claude Code CLI the provider runs |
 
 Seeded cases for the loop (a Semgrep finding, a lint error, a drop in new-code coverage and an unfixable finding) are in [`tests/loops/quality/`](../tests/loops/quality/README.md).
+
+## The vulnerability loop
+
+`rlp loop vuln` fixes what the `trivy` gate found by upgrading: a vulnerable dependency to a release that fixes it, or a container's base image to a newer tag. It never adds an exception: `.rlp/vex.yaml`, `.trivyignore` and the Trivy settings files are guarded, so an attempt that touches one is put back and thrown away, even where git ignores the file.
+
+**Discovery** reads the Trivy JSON reports the last trivy stage wrote (`.rlp/pipeline/reports/trivy-fs.json` and `trivy-image-<component>.json`), so run the gates first:
+
+```sh
+rlp pipeline run --reset -s setup
+for s in test package trivy; do rlp pipeline run -s "$s"; done
+rlp loop vuln
+```
+
+Each finding is a fixable HIGH or CRITICAL vulnerability that no unexpired `.rlp/vex.yaml` entry covers, as the gate counts them, with its package, installed version, fixed version, scan target and the manifest to change. The prompt groups them by manifest:
+
+| Found by | Manifest in the prompt |
+| --- | --- |
+| The filesystem scan | The file Trivy found the package in: `requirements.txt`, `uv.lock`, `package-lock.json` and so on |
+| An image scan, in a package the app declares | The requirements file, `pyproject.toml` or `package.json` that declares it |
+| An image scan, anything else (OS packages, tools that came with the base image) | The component's Dockerfile, marked as the base image |
+
+**Verify stages** are `setup`, `test`, `package` and `trivy`, so a fix is `fixed` only when the dependencies still install, the tests pass, the image builds and Trivy is clean. The golden pipeline has no separate `build` stage; the package verb builds what it ships.
+
+**Allowed paths** are dependency manifests, lockfiles and Dockerfiles: the tracked ones at each component's root, each container component's declared Dockerfile, and any manifest the filesystem scan named, outside hidden directories, `policy`, `infra` and `reports`.
+
+**Major-version bumps escalate.** Choosing a new major version is a human's call, so the loop never opens a PR for one:
+
+- Before the first agent call, a finding in a direct dependency whose every fixed version is on a new major version (installed 1.7.1, fixed in 2.4.0) escalates the run. Nothing is spent.
+- After the verify stages pass, the loop compares the branch with its base. If a direct dependency's pin (in a requirements file, `pyproject.toml`, `package.json`, or a lockfile entry for a declared package) or a Dockerfile's `FROM` tag moved to a new major version, the run escalates instead of ending `fixed`.
+
+A direct dependency is one a requirements file, `pyproject.toml` or `package.json` declares. A transitive package's major bump in a lockfile doesn't escalate by itself. The agent can't run commands, so it edits lockfiles by hand; a lockfile it can't update consistently fails the `setup` stage and the loop tries again or escalates.
+
+**In CI**, call the reusable [`loop-vuln.yml`](../.github/workflows/loop-vuln.yml) workflow after a failed golden run, and on a schedule so a CVE published against unchanged code is caught too:
+
+```yaml
+on:
+  push: {branches: [main]}
+  schedule: [{cron: "17 6 * * 1"}]
+jobs:
+  golden:
+    uses: rdlucas2/rlp/.github/workflows/golden.yml@<rlp git ref>
+    with: {rlp-version: "0.2.0"}
+  vuln-loop:
+    needs: golden
+    if: failure()
+    uses: rdlucas2/rlp/.github/workflows/loop-vuln.yml@<rlp git ref>
+    with: {rlp-version: "0.2.0"}
+    secrets:
+      app-id: ${{ secrets.APP_ID }}
+      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+It takes the same inputs and secrets as `loop-quality.yml` and honours the same toggle: the job is skipped when `RLP_LOOPS` is off, and every step after the toggle check is skipped unless `rlp.yaml` turns the vuln loop on. A `fixed` run pushes its branch and opens a PR labelled `agent:authored` and `loop:vuln` as the [agent identity](#agent-identity); an `escalated` or `error` run opens an [escalation issue](#escalation). The state file and gate results are uploaded as the `rlp-loop-vuln` artifact.
+
+Seeded cases (a vulnerable pinned package with a patch release, a vulnerable base image, and a fix that needs a major bump) are in [`tests/loops/vuln/`](../tests/loops/vuln/README.md).
 
 ## Escalation
 
