@@ -223,6 +223,14 @@ jobs:
           fi
           rlp loop escalate "$STATE" --post
 
+      # Loop telemetry (#53): iterations, findings, gates, cost and duration,
+      # then the outcome and total spend, in this run's job summary.
+      - name: Loop summary
+        if: always() && steps.toggle.outputs.enabled == 'true' && steps.loop.outputs.state != ''
+        env:
+          STATE: ${{ steps.loop.outputs.state }}
+        run: rlp loop summary "$STATE" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload loop state
         if: always() && steps.toggle.outputs.enabled == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2

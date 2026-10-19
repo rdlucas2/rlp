@@ -55,7 +55,17 @@ Opening the PR is a separate step, done as the loop's [agent identity](#agent-id
 
 ### State
 
-Every run that gets past discovery writes `.rlp/loops/<kind>-<run-id>.json`, updated after each iteration, so a run in progress or a finished one can be inspected. It records the kind, branch and base, the limits, the findings, and for each iteration the findings its prompt was built from, the agent result, the diff stat, the gate results, the commit, whether the attempt was thrown away and the spend so far, then the outcome and why. It validates against [`schemas/v1alpha1/loop-state.schema.json`](../schemas/v1alpha1/loop-state.schema.json). `--output json` prints the same document.
+Every run that gets past discovery writes `.rlp/loops/<kind>-<run-id>.json`, updated after each iteration, so a run in progress or a finished one can be inspected. It records the kind, branch and base, the limits, the findings, and for each iteration the findings its prompt was built from, the agent result, the diff stat, the gate results, the commit, whether the attempt was thrown away, the spend so far, the findings left afterwards (`findingsAfter`) and how long it took (`durationSeconds`), then the outcome and why. It validates against [`schemas/v1alpha1/loop-state.schema.json`](../schemas/v1alpha1/loop-state.schema.json). `--output json` prints the same document.
+
+### Telemetry
+
+`rlp loop summary <state-file>` renders a run's telemetry as Markdown: one table row per iteration with the findings before and after, the gate results, the cost and the duration, then the outcome and the total spend. The total is the sum of the iterations' agent costs. It works for any outcome, including runs that stopped before the first iteration.
+
+```sh
+rlp loop summary .rlp/loops/quality-20261019T120000Z-abc123.json >> "$GITHUB_STEP_SUMMARY"
+```
+
+Both loop workflows run it after the loop step, so every run's job summary shows the table, and upload the state file as the `rlp-loop-<kind>` artifact. `--output json` adds the iteration count and total spend alongside the Markdown. State files from before rlp recorded `findingsAfter` and `durationSeconds` still render; unknown values show as `-`. Dashboards and long-term storage come in slice 4.
 
 ### Adding a loop kind
 
