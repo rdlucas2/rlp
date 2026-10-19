@@ -1,5 +1,11 @@
 # The rlp golden pipeline: one reusable workflow every rlp repo calls.
 #
+#   on:
+#     pull_request:
+#     pull_request_review:
+#       types: [submitted, dismissed]   # gate-review re-checks on each review
+#     push:
+#       branches: [main]
 #   jobs:
 #     golden:
 #       uses: rdlucas2/rlp/.github/workflows/golden.yml@<rlp git ref>
@@ -9,6 +15,7 @@
 #         contents: write          # publish: attach zips and jars to releases
 #         packages: write          # publish: push images to GHCR
 #         security-events: write   # gates: upload SARIF to code scanning
+#         pull-requests: read      # gate-review: read the PR's reviews
 #         id-token: write          # deploy: GitHub OIDC for AWS (only with deploy-env)
 #
 # Every step is a thin wrapper around an `rlp` command; the gate logic lives in
@@ -74,8 +81,8 @@ on:
 
 # No workflow-level permissions: a called workflow may not ask for more than
 # its caller grants, even for a job that ends up skipped. The gates job reads the
-# repo and uploads SARIF; the publish and deploy jobs inherit what the caller
-# grants.
+# repo and uploads SARIF; the gate-review job reads pull request reviews; the
+# publish and deploy jobs inherit what the caller grants.
 
 jobs:
   gates:
@@ -133,7 +140,7 @@ jobs:
       - name: Gate results cache key
         id: results-key
         if: >-
-          !cancelled() && github.event_name == 'pull_request' &&
+          !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') &&
           (steps.coverage.outcome == 'success' || steps.coverage.outcome == 'failure')
         env:
           SCOPE: ${{ inputs.working-directory }}|${{ inputs.components }}
@@ -201,6 +208,58 @@ jobs:
             ${{ inputs.working-directory }}/.rlp/pipeline/results.json
             ${{ inputs.working-directory }}/.rlp/pipeline/reports/
           if-no-files-found: warn
+
+  # An agent-authored change that touches a gate (the policy stage's
+  # data.gate_changes, from the rlp.agent rules) merges only after a human who is
+  # neither the PR author nor an agent approves its head commit (#73). Callers
+  # also trigger on pull_request_review, so a review re-runs this check; a new
+  # push needs a new approval. Make `gate-review` a required check to enforce it.
+  gate-review:
+    needs: gates
+    if: >-
+      !cancelled() &&
+      (github.event_name == 'pull_request' || github.event_name == 'pull_request_review')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read  # list the PR's reviews
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RLP_SPEC: ${{ inputs.rlp-version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install rlp
+        run: |
+          case "$RLP_SPEC" in
+            git:*) spec="rlp-cli @ git+https://github.com/rdlucas2/rlp@${RLP_SPEC#git:}" ;;
+            path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
+            *) spec="rlp-cli==${RLP_SPEC}" ;;
+          esac
+          python -m pip install --disable-pip-version-check "$spec"
+          rlp --version
+      - name: Gate results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: rlp-gate-results
+          path: ${{ runner.temp }}/rlp-gate-results
+      - name: gate-review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The policy stage's results; without them the gate changes are unknown and the check fails.
+          results="$(find "$RUNNER_TEMP/rlp-gate-results" -name results.json -print -quit)"
+          set +e
+          rlp pipeline gate-review --results "${results:-$RUNNER_TEMP/rlp-gate-results/results.json}" > "$RUNNER_TEMP/gate-review.md"
+          code=$?
+          set -e
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/gate-review.md"
+          exit "$code"
 
   publish:
     needs: gates

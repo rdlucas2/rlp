@@ -5,12 +5,15 @@ name: golden-selftest
 
 on:
   pull_request:
+  pull_request_review:
+    types: [submitted, dismissed]  # golden.yml's gate-review re-checks on each review
   push:
     branches: [main]
 
 permissions:
   contents: read
   security-events: write  # golden.yml uploads SARIF to code scanning
+  pull-requests: read  # golden.yml's gate-review job reads the PR's reviews
 
 concurrency:
   group: golden-selftest-${{ github.ref }}
