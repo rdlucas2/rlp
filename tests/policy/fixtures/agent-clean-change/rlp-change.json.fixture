@@ -1,0 +1,56 @@
+{
+  "rlp_change": {
+    "baseline": "0123456789abcdef0123456789abcdef01234567",
+    "author": "rdlucas2",
+    "labels": [
+      "agent:authored"
+    ],
+    "files": [
+      {
+        "path": "src/app.py",
+        "status": "M",
+        "added": [
+          {
+            "line": 1,
+            "text": "    return value or 0"
+          }
+        ],
+        "removed": []
+      },
+      {
+        "path": "tests/test_app.py",
+        "status": "M",
+        "added": [
+          {
+            "line": 1,
+            "text": "def test_empty_value():"
+          },
+          {
+            "line": 2,
+            "text": "    assert handler(None) == 0"
+          }
+        ],
+        "removed": []
+      }
+    ],
+    "contracts": {},
+    "results": {
+      "base": {
+        "tests": {
+          "api": 3
+        },
+        "coverage": {
+          "api": 90.0
+        }
+      },
+      "head": {
+        "tests": {
+          "api": 4
+        },
+        "coverage": {
+          "api": 91.0
+        }
+      }
+    }
+  }
+}

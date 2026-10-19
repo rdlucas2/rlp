@@ -1,0 +1,29 @@
+{
+  "rlp_change": {
+    "baseline": "0123456789abcdef0123456789abcdef01234567",
+    "author": "rdlucas2",
+    "labels": [
+      "agent:authored"
+    ],
+    "files": [],
+    "contracts": {},
+    "results": {
+      "base": {
+        "tests": {
+          "api": 12
+        },
+        "coverage": {
+          "api": 90.0
+        }
+      },
+      "head": {
+        "tests": {
+          "api": 11
+        },
+        "coverage": {
+          "api": 90.0
+        }
+      }
+    }
+  }
+}

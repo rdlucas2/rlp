@@ -13,3 +13,8 @@ required_tags:
 # Default spend cap for one remediation loop run (USD), when `rlp loop <kind>`
 # is not given --max-spend. See docs/loops.md.
 loop_max_spend_usd: 5
+
+# GitHub logins whose pull requests count as agent-authored for the rlp.agent
+# anti-cheat rules, besides any PR labelled agent:authored. The agent identity
+# (#51) adds its bot login here.
+agent_authors: []

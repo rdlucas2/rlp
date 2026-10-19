@@ -1,0 +1,27 @@
+{
+  "rlp_change": {
+    "baseline": "0123456789abcdef0123456789abcdef01234567",
+    "author": "rdlucas2",
+    "labels": [
+      "agent:authored"
+    ],
+    "files": [
+      {
+        "path": "src/app.py",
+        "status": "M",
+        "added": [
+          {
+            "line": 1,
+            "text": "os.system(cmd)  # nosemgrep"
+          }
+        ],
+        "removed": []
+      }
+    ],
+    "contracts": {},
+    "results": {
+      "base": null,
+      "head": null
+    }
+  }
+}

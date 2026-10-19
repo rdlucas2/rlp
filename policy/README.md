@@ -13,6 +13,7 @@ The rlp policy bundle: Rego rules that gate contract files, Terraform plans and 
 | `contract/platform.rego` | `rlp.contract.platform` | Platform limits and VEX exceptions |
 | `terraform/` | `rlp.terraform` | Terraform plan JSON |
 | `container/` | `rlp.container` | Dockerfiles |
+| `agent/` | `rlp.agent` | Agent-authored changes that would weaken a gate |
 | `platform/data.yaml` | `data.platform` | Coverage floor and required tags (data, not code) |
 
 Every package has a `_test.rego` file with at least one passing and one failing case per rule.
@@ -71,6 +72,28 @@ For example: `[RLP-X003] rlp.yaml components[0].config[0].from: refers to servic
 | RLP-T003 | Encryption at rest for RDS, EBS, EFS, ElastiCache, SQS and SNS (S3 encrypts by default) |
 | RLP-D001 | Base images are pinned to a tag other than `latest`, or a digest |
 | RLP-D002 | The final stage runs as a non-root `USER` |
+| RLP-A001 | An agent-authored change doesn't touch a protected gate file: `policy/`, `.github/workflows/`, `.rlp/vex.yaml`, `.pre-commit-config.yaml`, Semgrep, Trivy or coverage settings |
+| RLP-A002 | An agent-authored change doesn't modify the `quality` block of `rlp.yaml` |
+| RLP-A003 | An agent-authored change doesn't modify the test verb: the Taskfile `test` task or a component's `verbs.test` |
+| RLP-A004 | An agent-authored change adds no suppression comments (`nosemgrep`, `NOSONAR`, `noqa`, `type: ignore`, `pragma: no cover`, `eslint-disable` and equivalents) |
+| RLP-A005 | An agent-authored change doesn't lower a component's test count (base and head results) |
+| RLP-A006 | An agent-authored change doesn't lower a component's line coverage (base and head results) |
+| RLP-A007 | An agent-authored change doesn't remove more test definitions than it adds |
+
+## Agent-authored changes
+
+"Verifiers the agent can't change without sign-off" (docs/PLAN.md): the `rlp.agent` rules flag an agent-authored pull request that changes a gate. They are conftest `warn` rules, not `deny` rules, so an agent can make a gate change an issue calls for (removing a flaky test, say), and a human reviews each one before merge (#73). `rlp policy check` prints them as warnings and exits 0 when they are its only findings; the policy stage records them in `results.json` under `data.gate_changes`, and `rlp pipeline summary` lists them under "Gate changes needing review". The A-rule rows in the table above describe what each rule checks; a breach is a warning, not a failure. A change is agent-authored when it carries the `agent:authored` label or its author is in `agent_authors` in `platform/data.yaml` (the agent identity, #51, adds its login there). The same change from a human passes these rules.
+
+The rules don't read repo files. `rlp policy check` and the policy stage add one more document to conftest's input, `rlp_change` (built by `cli/src/rlp_cli/change.py`):
+
+| Field | From |
+| --- | --- |
+| `author`, `labels` | `$RLP_PR_AUTHOR` and `$RLP_PR_LABELS` (comma-separated) when set, otherwise the `pull_request` event at `$GITHUB_EVENT_PATH` |
+| `files` | Every file changed since the baseline commit (`$RLP_BASELINE`, see `baseline.py`), with its added lines and removed lines; untracked files count as added |
+| `contracts` | `rlp.yaml` and Taskfiles in the diff, parsed before and after |
+| `results` | Test counts and line coverage per component from a base and a head `results.json`: `--base-results` or `$RLP_BASE_RESULTS`, and `--head-results` (default `.rlp/pipeline/results.json`) |
+
+Without a baseline there is no diff, so only the results rules can fire. The policy stage runs before the test stage, so in the golden pipeline RLP-A007 guards the test count from the diff; RLP-A005 and RLP-A006 fire when `rlp policy check` is given both results files.
 
 ## VEX exceptions
 

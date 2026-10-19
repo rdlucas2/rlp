@@ -30,7 +30,7 @@ Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git
 | Command | What it does |
 | --- | --- |
 | `rlp validate [PATH]` | Validate `rlp.yaml` and `rlp-template.yaml` against the JSON Schemas; errors name the field path |
-| `rlp policy check [PATH] [--namespace NS]` | Run the policy bundle on the repo through conftest |
+| `rlp policy check [PATH] [--namespace NS] [--base-results F] [--head-results F]` | Run the policy bundle on the repo through conftest, including the anti-cheat rules on the change since the baseline (see policy/README.md) |
 | `rlp setup\|lint\|test\|build\|package [--component NAME] [--path ROOT]` | Run that verb for every component (or the named ones): `verbs.<name>` from `rlp.yaml` if set, else `task <name>`, in the component's `path` |
 | `rlp run [--no-start] [--timeout S]` | Start every component and its backing services locally with Docker Compose, then wait until smoke passes ([docs/runtime.md](../docs/runtime.md)) |
 | `rlp smoke [--timeout S]` | Check each running component: health endpoints, a function invoke, or a job's exit code |

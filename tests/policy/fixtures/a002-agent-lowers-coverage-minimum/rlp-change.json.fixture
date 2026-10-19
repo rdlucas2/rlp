@@ -1,0 +1,68 @@
+{
+  "rlp_change": {
+    "baseline": "0123456789abcdef0123456789abcdef01234567",
+    "author": "rdlucas2",
+    "labels": [
+      "agent:authored"
+    ],
+    "files": [
+      {
+        "path": "rlp.yaml",
+        "status": "M",
+        "added": [
+          {
+            "line": 1,
+            "text": "    minimum: 70"
+          }
+        ],
+        "removed": []
+      }
+    ],
+    "contracts": {
+      "rlp.yaml": {
+        "before": {
+          "apiVersion": "rlp/v1alpha1",
+          "kind": "Repo",
+          "metadata": {
+            "name": "hello",
+            "project": "hello"
+          },
+          "components": [
+            {
+              "name": "api",
+              "verbs": {}
+            }
+          ],
+          "quality": {
+            "coverage": {
+              "minimum": 80
+            }
+          }
+        },
+        "after": {
+          "apiVersion": "rlp/v1alpha1",
+          "kind": "Repo",
+          "metadata": {
+            "name": "hello",
+            "project": "hello"
+          },
+          "components": [
+            {
+              "name": "api",
+              "verbs": {}
+            }
+          ],
+          "quality": {
+            "coverage": {
+              "minimum": 70
+            }
+          }
+        }
+      }
+    },
+    "results": {
+      "base": null,
+      "head": null
+    }
+  }
+}

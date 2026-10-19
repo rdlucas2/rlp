@@ -73,7 +73,7 @@ def python_cmd() -> str:
 # The policy fixtures store Dockerfiles and plan JSON under other names, so
 # `rlp policy check` on the rlp repo skips them (#62); tests/policy/test_bundle.py
 # holds the same map.
-STORED_FIXTURE_NAMES = {"Containerfile.fixture": "Dockerfile", "plan.json.fixture": "plan.json"}
+STORED_FIXTURE_NAMES = {"Containerfile.fixture": "Dockerfile", "plan.json.fixture": "plan.json", "rlp-change.json.fixture": "rlp-change.json"}
 
 
 def restore_fixture_names(repo: Path) -> None:
