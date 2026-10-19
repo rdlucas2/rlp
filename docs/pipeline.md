@@ -71,6 +71,17 @@ The gates run in this order and stop at the first failure (`rlp pipeline stages`
 
 The pre-commit hook for gitleaks only scans staged changes, which is nothing in CI. That's why `precommit` also runs a full `gitleaks git` scan.
 
+### Test-count and coverage rules
+
+The anti-cheat rules RLP-A005 and RLP-A006 ([policy/README.md](../policy/README.md#agent-authored-changes)) warn when an agent-authored change lowers a component's test count or line coverage. They need two `results.json` files, so the workflow wires them in around the stages:
+
+1. Each push to the default branch whose gates pass saves its `.rlp/pipeline/results.json` to the Actions cache, keyed by the commit (and by `working-directory` and `components`, so callers with several projects don't mix them up).
+2. On a pull request, once the coverage stage has run (passed or failed), the workflow restores the base commit's results and runs the `policy` stage again with `RLP_BASE_RESULTS` pointing at them. The head results are the ones this run just wrote.
+
+Their warnings are recorded with the other gate changes in the policy stage's `data.gate_changes` and listed in the summary; like every `rlp.agent` rule they don't fail the stage, and a human reviews each one (#73). With no cached results for the base commit (the first run after this lands, or a cache entry evicted after 7 days unused), the step passes, prints a notice, and the policy stage's detail says the two rules were skipped. The cache needs no extra permissions from the caller, unlike reading another run's artifacts, which needs `actions: read`.
+
+Locally, pass both files yourself: `rlp policy check --namespace rlp.agent --base-results <base results.json>`.
+
 ### Results and summaries
 
 Each stage records its result in `.rlp/pipeline/results.json`. `rlp pipeline summary` renders the file as Markdown: one row per stage, then a per-component table for the verb stages. The workflow appends that to the job summary and uploads the JSON as the `rlp-gate-results` artifact for agents and later slices. The scanners also write SARIF and JSON reports to `.rlp/pipeline/reports/`; the workflow uploads the SARIF to code scanning and adds the reports to the same artifact.
