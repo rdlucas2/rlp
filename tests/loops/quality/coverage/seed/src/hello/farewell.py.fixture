@@ -1,0 +1,7 @@
+"""Goodbyes, added without tests."""
+
+
+def farewell(name: str, formal: bool = False) -> str:
+    if formal:
+        return f"goodbye, {name}"
+    return f"bye, {name}"

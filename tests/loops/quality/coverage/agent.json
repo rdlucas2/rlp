@@ -1,0 +1,9 @@
+[
+  {
+    "summary": "Added tests/test_farewell.py covering both branches of farewell().",
+    "costUsd": 0.15,
+    "files": {
+      "tests/test_farewell.py": "from hello.farewell import farewell\n\n\ndef test_farewell():\n    assert farewell(\"rlp\") == \"bye, rlp\"\n\n\ndef test_formal_farewell():\n    assert farewell(\"rlp\", formal=True) == \"goodbye, rlp\"\n"
+    }
+  }
+]

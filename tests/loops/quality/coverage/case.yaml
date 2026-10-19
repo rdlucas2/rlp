@@ -1,0 +1,7 @@
+# A drop in new-code coverage: a new module with no tests.
+description: src/hello/farewell.py is new and no test calls it, so coverage of the changed lines is 0%.
+expect:
+  outcome: fixed
+  iterations: 1
+  first-failing-stage: coverage
+semgrep: []

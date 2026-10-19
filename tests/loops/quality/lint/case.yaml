@@ -1,0 +1,7 @@
+# A lint error: a syntax error the lint verb (python -m compileall) rejects.
+description: src/hello/shout.py is missing the colon after its def line.
+expect:
+  outcome: fixed
+  iterations: 1
+  first-failing-stage: lint
+semgrep: []

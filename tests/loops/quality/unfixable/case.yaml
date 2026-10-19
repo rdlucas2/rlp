@@ -1,0 +1,14 @@
+# Unfixable: the only finding is in .github/, which the quality loop may not change.
+description: .github/workflows/triage.yml interpolates the issue title into a shell command (Semgrep run-shell-injection).
+expect:
+  outcome: escalated
+  iterations: 3
+  first-failing-stage: sast
+semgrep:
+  - rule: yaml.github-actions.security.run-shell-injection.run-shell-injection
+    path: .github/workflows/triage.yml
+    pattern: "${{ github.event.issue.title }}"
+    severity: ERROR
+    message: >-
+      Using variable interpolation with github context data in a run step could
+      allow an attacker to inject their own code into the runner.
