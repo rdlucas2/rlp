@@ -54,10 +54,21 @@ cd platform && uv run python -m rlp_platform openapi > openapi.json
 | `GET /api/v1/repos/{owner}/{name}/components?include_removed=` | The repo's components; `include_removed=true` adds those that left `rlp.yaml` |
 | `GET /api/v1/repos/{owner}/{name}/builds?limit=` | The repo's builds, newest first |
 | `GET /api/v1/repos/{owner}/{name}/deployments?limit=` | The repo's deployments, newest first |
+| `POST /api/v1/builds` | Record a pipeline run attempt's gate results and artifacts (`rlp pipeline report`); see [Builds and deployments](#builds-and-deployments). 201, or 200 when the attempt was reported before |
+| `POST /api/v1/deployments` | Record a component deployed to an environment (`rlp pipeline report --deployment`). 201, 200 when reported before, 404 when the repo or component isn't indexed |
 | `POST /api/v1/hooks/github` | GitHub's `push` and `repository` webhook events, signed; see [The repo indexer](#the-repo-indexer) |
 | `POST /api/v1/sync` | Re-index one repo (`{"repo": "OWNER/NAME"}`) or, with no body, every repo the platform can see |
 
-Repos, components, builds and deployments are read-only here: the repo indexer and build ingestion (#94) write them. A repo carries `index_error` (why its last index failed, or null) and a component carries `removed_at` (when it left `rlp.yaml`, or null). An unknown project or repo answers 404 with `{"detail": "..."}`; a malformed body answers 422.
+Repos and components are read-only here: the repo indexer writes them. Builds and deployments are written only by the pipeline's reports. A repo carries `index_error` (why its last index failed, or null) and a component carries `removed_at` (when it left `rlp.yaml`, or null). An unknown project or repo answers 404 with `{"detail": "..."}`; a malformed body answers 422.
+
+### Builds and deployments
+
+The golden pipeline reports each run to the platform with `rlp pipeline report` ([pipeline.md](pipeline.md#reporting-to-the-platform)).
+
+- **A build is one run attempt**: (repo, commit, `run_id`, `run_attempt`) identifies it, so reporting the same attempt again updates that build instead of adding one. Each report's stage results (the entries of `.rlp/pipeline/results.json`) merge into the build by stage name, so the gates and publish jobs of a run add up to one build. A build has `passed: true` when it has stages and none failed; `failed_stages` lists the ones that did.
+- **Artifacts** are what the run published, each with its component, kind and reference (an image digest such as `ghcr.io/acme/x/demo-api@sha256:...`, or a release asset URL). The same artifact reported twice is recorded once.
+- **A build for a repo the indexer hasn't seen yet** is accepted and kept under the reported name. The first time the indexer indexes that repo, it attaches the build and links its artifacts to the components they name.
+- **A deployment** is one component's artifact in one environment at one time: (component, environment, artifact, `deployed_at`) identifies it, and reporting it again only updates its `status`. When the report names its run and that run's build recorded an artifact for the component, the deployment links to it (the digest, not just the tag). The repo and the component must already be indexed; otherwise the report answers 404.
 
 ### Moving a project
 
@@ -164,6 +175,7 @@ Every command takes `--output json` (`-o json`): stdout is then one JSON documen
 | `rlp repo sync [OWNER/NAME]` | Re-index one repo, or every repo the platform can see; exits 1 if any wasn't indexed |
 | `rlp lifecycle show PROJECT` | The project's phase and its history |
 | `rlp lifecycle move PROJECT PHASE --reason TEXT` | Move the project; recorded with your login name and the reason |
+| `rlp pipeline report [--deployment]` | Send this run's `results.json` and published artifacts as a build, or the deploy stage's deployments. Exits 0 without reporting when no platform is configured or it can't be reached |
 
 Exit codes follow the rest of the CLI: 0 success; 1 when the platform says no (a rejected move, an unknown project, a name already taken); 2 for setup problems (no URL or token, the platform unreachable, a refused token).
 
