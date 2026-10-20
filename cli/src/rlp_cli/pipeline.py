@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rlp_cli import baseline, change, contract, cost, coverage, infra, policy, reports, sast, secrets, sonar, trivy, verbs, vex
@@ -41,6 +42,8 @@ STAGE_NAMES = [name for name, _ in STAGES]
 RESULTS = Path(".rlp") / "pipeline" / "results.json"
 # SARIF and JSON reports from the scanners, uploaded to code scanning by golden.yml.
 REPORTS = Path(".rlp") / "pipeline" / "reports"
+# What `rlp publish` pushed (image digests, release asset URLs), for `rlp pipeline report`.
+PUBLISHED = Path(".rlp") / "pipeline" / "published.json"
 
 
 @dataclass
@@ -277,11 +280,13 @@ def stage_deploy(ctx: Context) -> StageResult:
     if skip:
         return skip
     stack = infra.Stack(env=ctx.deploy_env, dir=infra.stack_dir(ctx.root, ctx.deploy_env))
+    deployed_at = datetime.now(UTC).isoformat(timespec="seconds")
     infra.apply(stack, stream=ctx.stream)
     outs = infra.outputs(stack)
     checks = infra.smoke(outs, timeout=ctx.smoke_timeout)
     per = {c.component: "passed" if c.ok else "failed" for c in checks}
-    data = {"env": ctx.deploy_env, "checks": [c.as_dict() for c in checks]}
+    # deployed_at identifies the deployment when `rlp pipeline report --deployment` reports it.
+    data = {"env": ctx.deploy_env, "deployed_at": deployed_at, "checks": [c.as_dict() for c in checks]}
     if not all(c.ok for c in checks):
         failed = "; ".join(c.text() for c in checks if not c.ok)
         return StageResult("deploy", "failed", f"applied to {ctx.deploy_env}, but readiness failed: {failed}", components=per, data=data)
@@ -328,6 +333,9 @@ def save_results(root: Path, results: dict[str, dict]) -> None:
 
 def run(ctx: Context, stages: list[str], reset: bool = False) -> list[StageResult]:
     """Run stages in pipeline order, stopping at the first failure. Results merge into the results file."""
+    if reset:
+        # A fresh run hasn't published anything yet.
+        (ctx.root / PUBLISHED).unlink(missing_ok=True)
     recorded = {} if reset else load_results(ctx.root)
     ran = []
     for name in [s for s in STAGE_NAMES if s in stages]:

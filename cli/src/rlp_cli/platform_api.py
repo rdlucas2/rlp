@@ -95,6 +95,41 @@ class SyncResult(TypedDict):
     results: list[IndexResult]
 
 
+class Artifact(TypedDict):
+    kind: str
+    reference: str
+
+
+class BuildArtifact(Artifact):
+    component: str
+
+
+class Build(TypedDict):
+    id: int
+    repo: str
+    commit: str
+    branch: str
+    run_id: str
+    run_attempt: int
+    passed: bool
+    failed_stages: list[str]
+    stages: dict[str, Any]
+    artifacts: list[BuildArtifact]
+    workflow_run_url: str | None
+    started_at: str
+    finished_at: str | None
+
+
+class Deployment(TypedDict):
+    id: int
+    repo: str
+    component: str
+    environment: str
+    status: str
+    artifact: Artifact
+    deployed_at: str
+
+
 class RuleResult(TypedDict):
     rule: str
     description: str
@@ -300,6 +335,16 @@ class PlatformClient:
         if full_name is not None:
             _repo_path(full_name)  # reject a malformed name before calling
         return self._call("POST", "/sync", json={"repo": full_name} if full_name else None)
+
+    # pipeline reports
+
+    def report_build(self, report: Mapping[str, Any]) -> Build:
+        """Record a run attempt's gate results and artifacts; the same attempt again updates its build."""
+        return self._call("POST", "/builds", json=dict(report))
+
+    def report_deployment(self, report: Mapping[str, Any]) -> Deployment:
+        """Record a component deployed to an environment; the repo and component must be indexed."""
+        return self._call("POST", "/deployments", json=dict(report))
 
     # lifecycle
 
