@@ -5,7 +5,8 @@
 # `namespaces` limits the check (default: all namespaces).
 #
 # Dockerfiles are stored as Containerfile.fixture, Terraform plans as
-# plan.json.fixture and change documents as rlp-change.json.fixture; the tests
+# plan.json.fixture, change documents as rlp-change.json.fixture and transition
+# documents as rlp-transition.json.fixture; the tests
 # rename them in the temp copy they check. Stored under their real names, `rlp policy check` on the rlp repo would report the
 # fixtures' deliberate violations (#62).
 cases:
@@ -194,3 +195,56 @@ cases:
     expect: []
     warn:
       - RLP-A007
+  lifecycle-allowed-move:
+    description: A project that meets every rule for live moves there from in-dev.
+    namespaces:
+      - rlp.lifecycle
+    expect: []
+  l101-skips-a-phase:
+    description: A project moves from proposed straight to live.
+    namespaces:
+      - rlp.lifecycle
+    expect:
+      - RLP-L101
+  l102-designed-without-description:
+    description: A project with no description moves to designed.
+    namespaces:
+      - rlp.lifecycle
+    expect:
+      - RLP-L102
+  l103-scaffolded-without-repo:
+    description: A project with no linked repo moves to scaffolded.
+    namespaces:
+      - rlp.lifecycle
+    expect:
+      - RLP-L103
+  l104-in-dev-without-build:
+    description: A project whose repo has no build moves to in-dev.
+    namespaces:
+      - rlp.lifecycle
+    expect:
+      - RLP-L104
+  l105-live-without-owner:
+    description: A project with no owner moves to live.
+    namespaces:
+      - rlp.lifecycle
+    expect:
+      - RLP-L105
+  l106-live-without-dashboard:
+    description: A project with no dashboard URL moves to live.
+    namespaces:
+      - rlp.lifecycle
+    expect:
+      - RLP-L106
+  l107-live-with-failing-build:
+    description: A project whose repo's latest default-branch build failed moves to live.
+    namespaces:
+      - rlp.lifecycle
+    expect:
+      - RLP-L107
+  l108-retired-without-teardown:
+    description: A deprecated project with no teardown on record moves to retired.
+    namespaces:
+      - rlp.lifecycle
+    expect:
+      - RLP-L108

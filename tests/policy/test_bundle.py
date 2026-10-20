@@ -8,9 +8,10 @@ equals its `warn` list exactly, so an invalid fixture trips its own rule and
 nothing else.
 
 Fixture files that conftest would parse on its own (Dockerfiles, Terraform plan
-JSON) are stored under other names, so `rlp policy check` on the rlp repo
-doesn't report the fixtures' deliberate violations (#62). restore_names() gives
-them their real names in the temp copy each test checks.
+JSON, change and transition documents) are stored under other names, so
+`rlp policy check` on the rlp repo doesn't report the fixtures' deliberate
+violations (#62). restore_names() gives them their real names in the temp copy
+each test checks.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ MESSAGE = re.compile(r"^\[(RLP-[A-Z][0-9]{3})\] (\S+) (.+?): (.+)\. Fix: (.+)\.$
 
 # Stored name -> real name. conftest reads any file with "dockerfile" in its
 # name as a Dockerfile, so the stored name avoids that word.
-STORED_NAMES = {"Containerfile.fixture": "Dockerfile", "plan.json.fixture": "plan.json", "rlp-change.json.fixture": "rlp-change.json"}
+STORED_NAMES = {"Containerfile.fixture": "Dockerfile", "plan.json.fixture": "plan.json", "rlp-change.json.fixture": "rlp-change.json", "rlp-transition.json.fixture": "rlp-transition.json"}
 
 
 def restore_names(repo: Path) -> None:
