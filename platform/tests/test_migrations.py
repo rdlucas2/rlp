@@ -51,12 +51,28 @@ def test_migrate_twice_changes_nothing(migrated_db):
     assert schema(migrated_db) == before
 
 
-def test_downgrade_one_step_and_up_again(migrated_db):
+def test_downgrade_to_base_and_up_again(migrated_db):
     before = schema(migrated_db)
-    db.downgrade(migrated_db, "-1")
+    db.downgrade(migrated_db, "base")
     assert set(schema(migrated_db)["tables"]) == {"alembic_version"}
     db.upgrade(migrated_db)
     assert schema(migrated_db) == before
+
+
+def columns(url: str, table: str) -> list[str]:
+    return [c[0] for c in schema(url)["tables"][table]["columns"]]
+
+
+def test_downgrade_one_step_and_up_again(migrated_db):
+    before = schema(migrated_db)
+    db.downgrade(migrated_db, "-1")
+    assert schema(migrated_db)["version"] == ["0001"]
+    assert "index_error" not in columns(migrated_db, "repos")
+    assert "removed_at" not in columns(migrated_db, "components")
+    db.upgrade(migrated_db)
+    assert schema(migrated_db) == before
+    assert "index_error" in columns(migrated_db, "repos")
+    assert "removed_at" in columns(migrated_db, "components")
 
 
 def test_phase_is_a_postgres_enum(migrated_db):

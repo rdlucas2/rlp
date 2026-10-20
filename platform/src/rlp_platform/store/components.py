@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from rlp_platform.models import Component, Repo
 from rlp_platform.store import _base
 
-UPDATABLE = frozenset({"language", "artifact_kind", "runtime_kind"})
+UPDATABLE = frozenset({"language", "artifact_kind", "runtime_kind", "removed_at"})
 
 
 def create(
@@ -36,8 +36,13 @@ def get_by_name(session: Session, repo_id: int, name: str) -> Component:
     return component
 
 
-def list_(session: Session, *, repo_id: int | None = None, project_id: int | None = None) -> list[Component]:
+def list_(
+    session: Session, *, repo_id: int | None = None, project_id: int | None = None, include_removed: bool = True
+) -> list[Component]:
+    """By repo, then name. `include_removed=False` leaves out components that left their rlp.yaml."""
     query = select(Component).order_by(Component.repo_id, Component.name)
+    if not include_removed:
+        query = query.where(Component.removed_at.is_(None))
     if repo_id is not None:
         query = query.where(Component.repo_id == repo_id)
     if project_id is not None:

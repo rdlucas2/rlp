@@ -10,7 +10,17 @@ from sqlalchemy.orm import Session
 from rlp_platform.models import Repo
 from rlp_platform.store import _base
 
-UPDATABLE = frozenset({"project_id", "default_branch", "template_source", "template_version", "last_indexed_commit"})
+UPDATABLE = frozenset(
+    {
+        "full_name",
+        "project_id",
+        "default_branch",
+        "template_source",
+        "template_version",
+        "last_indexed_commit",
+        "index_error",
+    }
+)
 
 
 def create(
