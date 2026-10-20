@@ -11,6 +11,9 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY src/ src/
 COPY migrations/ migrations/
 RUN uv sync --locked --no-dev --no-editable
+# The lifecycle rules run on OPA: download the pinned, checksum-verified binary
+# for this architecture (rlp_platform/opa.py pins it where the rlp CLI does).
+RUN /app/.venv/bin/python -m rlp_platform.opa /opt/opa/opa
 
 # Runtime stage: the virtualenv only, run as a non-root user.
 FROM python:3.13-slim
@@ -19,6 +22,7 @@ FROM python:3.13-slim
 RUN python -m pip uninstall --yes --no-input pip setuptools \
     && useradd --system --uid 10001 --no-create-home app
 COPY --from=build /app/.venv /app/.venv
+COPY --from=build /opt/opa/opa /usr/local/bin/opa
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     HOST=0.0.0.0 \

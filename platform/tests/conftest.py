@@ -7,7 +7,7 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from rlp_platform import db
+from rlp_platform import db, opa
 from rlp_platform.app import create_app
 from rlp_platform.config import Settings
 
@@ -69,3 +69,13 @@ def session(migrated_db):
     with Session(engine) as s:
         yield s
     engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def opa_path(tmp_path_factory) -> str:
+    """The opa binary the lifecycle tests run: the one on PATH, else the pinned one, downloaded for this session."""
+    try:
+        return opa.find()
+    except opa.OpaError:
+        exe = ".exe" if os.name == "nt" else ""
+        return str(opa.install(tmp_path_factory.mktemp("opa") / f"opa{exe}"))

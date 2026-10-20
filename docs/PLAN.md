@@ -117,3 +117,5 @@ Work flows left to right, from creating a project to shipping it to operating it
 | `static-site` | nginx container | S3 + CloudFront |
 | `job` | One-shot Compose service | Scheduled ECS task |
 | Backing services | Postgres and Redis containers, LocalStack | RDS, ElastiCache, S3, SQS, SNS |
+
+**Lifecycle.** A project moves through `proposed → designed → scaffolded → in-dev → live → deprecated → retired`. Each move is checked against Rego entry rules in the policy bundle's `rlp.lifecycle` package and recorded with their results; see [docs/lifecycle.md](lifecycle.md).

@@ -1,0 +1,24 @@
+{
+  "rlp_transition": {
+    "project": {
+      "name": "api",
+      "description": "The orders API",
+      "owner": "rdlucas2",
+      "dashboard_url": null
+    },
+    "from": "in-dev",
+    "to": "live",
+    "repos": [
+      {
+        "full_name": "acme/api",
+        "default_branch": "main",
+        "builds": 3,
+        "latest_default_branch_build": {
+          "commit": "abc123",
+          "passed": true
+        }
+      }
+    ],
+    "teardown": null
+  }
+}

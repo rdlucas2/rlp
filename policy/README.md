@@ -1,6 +1,6 @@
 # policy
 
-The rlp policy bundle: Rego rules that gate contract files, Terraform plans and Dockerfiles. JSON Schema (`schemas/`) is the authoring aid; this bundle is the gate. One bundle, one engine (OPA via conftest), the same result on a laptop and in CI. See #10.
+The rlp policy bundle: Rego rules that gate contract files, Terraform plans, Dockerfiles and project lifecycle moves. JSON Schema (`schemas/`) is the authoring aid; this bundle is the gate. One bundle, one engine (OPA via conftest), the same result on a laptop and in CI. See #10.
 
 ## Layout
 
@@ -14,6 +14,7 @@ The rlp policy bundle: Rego rules that gate contract files, Terraform plans and 
 | `terraform/` | `rlp.terraform` | Terraform plan JSON |
 | `container/` | `rlp.container` | Dockerfiles |
 | `agent/` | `rlp.agent` | Agent-authored changes that would weaken a gate |
+| `lifecycle/` | `rlp.lifecycle` | Entry rules for a project's move to a lifecycle phase ([docs/lifecycle.md](../docs/lifecycle.md)) |
 | `platform/data.yaml` | `data.platform` | Coverage floor and required tags (data, not code) |
 
 Every package has a `_test.rego` file with at least one passing and one failing case per rule.
@@ -72,6 +73,14 @@ For example: `[RLP-X003] rlp.yaml components[0].config[0].from: refers to servic
 | RLP-T003 | Encryption at rest for RDS, EBS, EFS, ElastiCache, SQS and SNS (S3 encrypts by default) |
 | RLP-D001 | Base images are pinned to a tag other than `latest`, or a digest |
 | RLP-D002 | The final stage runs as a non-root `USER` |
+| RLP-L101 | A lifecycle move is allowed: one phase forward, `deprecated` from `live` or `in-dev`, back to `live` from `deprecated`, `retired` only from `deprecated` |
+| RLP-L102 | A project moving to `designed` has a description |
+| RLP-L103 | A project moving to `scaffolded` has a linked repo |
+| RLP-L104 | A project moving to `in-dev` has a build on record |
+| RLP-L105 | A project moving to `live` has an owner |
+| RLP-L106 | A project moving to `live` has a dashboard URL |
+| RLP-L107 | A project moving to `live` has a linked repo, and the latest default-branch build of each passed |
+| RLP-L108 | A project moving to `retired` has the retirement workflow's teardown on record |
 | RLP-A001 | An agent-authored change doesn't touch a protected gate file: `policy/`, `.github/workflows/`, `.rlp/vex.yaml`, `.pre-commit-config.yaml`, Semgrep, Trivy or coverage settings |
 | RLP-A002 | An agent-authored change doesn't modify the `quality` block of `rlp.yaml` |
 | RLP-A003 | An agent-authored change doesn't modify the test verb: the Taskfile `test` task or a component's `verbs.test` |
@@ -94,6 +103,10 @@ The rules don't read repo files. `rlp policy check` and the policy stage add one
 | `results` | Test counts and line coverage per component from a base and a head `results.json`: `--base-results` or `$RLP_BASE_RESULTS`, and `--head-results` (default `.rlp/pipeline/results.json`) |
 
 Without a baseline there is no diff, so only the results rules can fire. The policy stage runs before the test stage, so at first RLP-A007 guards the test count from the diff. On pull requests the golden pipeline runs the policy stage again after the coverage stage, with `$RLP_BASE_RESULTS` set to the base commit's `results.json` (kept in the Actions cache by each push to the default branch), so RLP-A005 and RLP-A006 compare the two and their warnings join `data.gate_changes`. With no base results, a first run for example, that run passes and its detail says the two rules were skipped. See [docs/pipeline.md](../docs/pipeline.md#test-count-and-coverage-rules).
+
+## Lifecycle moves
+
+The `rlp.lifecycle` rules don't read repo files either. They read an `rlp_transition` document that the platform builds from the project record for each requested move (the project, its current and target phase, and its repos' builds), so `rlp policy check` on a repo finds nothing for them. The platform evaluates them with `opa eval` from its own copy of `lifecycle/lifecycle.rego`, shipped in the platform image; `tests/policy/test_lifecycle_copy.py` keeps the copy identical to this one. See [docs/lifecycle.md](../docs/lifecycle.md).
 
 ## VEX exceptions
 

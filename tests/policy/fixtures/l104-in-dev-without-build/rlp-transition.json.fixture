@@ -1,0 +1,21 @@
+{
+  "rlp_transition": {
+    "project": {
+      "name": "api",
+      "description": "The orders API",
+      "owner": "rdlucas2",
+      "dashboard_url": "https://grafana.example/d/api"
+    },
+    "from": "scaffolded",
+    "to": "in-dev",
+    "repos": [
+      {
+        "full_name": "acme/api",
+        "default_branch": "main",
+        "builds": 0,
+        "latest_default_branch_build": null
+      }
+    ],
+    "teardown": null
+  }
+}
