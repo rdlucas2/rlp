@@ -258,6 +258,21 @@ Outputs: `token`, `login` (`localrlp[bot]`) and `email` (the bot's noreply addre
 
 **Checking it.** The `agent-identity` workflow runs the action by hand (Actions, agent-identity, Run workflow). It pushes a throwaway branch, opens a draft PR labelled `agent:authored`, fails unless GitHub shows `localrlp[bot]` as the author of both the commit and the PR, then closes the PR and deletes the branch. Tick **keep-open** to leave them for inspection.
 
+**The build loop's pull requests.** The scheduled build loop ([`LOOP.md`](LOOP.md)) runs outside Actions and pushes as Ryan's account, so it can't mint the App's token. The repo's `loop-pr` workflow (#99) does that for it. A push to an `agent/**` branch calls the reusable [`loop-open-pr.yml`](../.github/workflows/loop-open-pr.yml), which opens a PR from that branch into the default branch as `localrlp[bot]`. The PR is titled from the tip commit and labelled `agent:authored`; the loop then writes its title and body. A branch that already has a PR, open or closed, gets no second one. The commits stay Ryan's. The PR's author is the App, and that's what lets Ryan approve it and clear `gate-review`. Another repo the loop works in gets the same behaviour from a caller like this, once the App is installed there and the repo has `APP_ID` and `APP_PRIVATE_KEY`:
+
+```yaml
+on:
+  push:
+    branches: ["agent/**"]
+permissions: {}
+jobs:
+  open-pr:
+    uses: rdlucas2/rlp/.github/workflows/loop-open-pr.yml@<rlp git ref>
+    secrets:
+      app-id: ${{ secrets.APP_ID }}
+      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+```
+
 **Rotating the key.** Generate a new private key in the App's settings, replace `APP_PRIVATE_KEY`, run the `agent-identity` workflow, then delete the old key. Renaming the App changes its bot login: update `agent_authors` in the same PR.
 
 ## The provider interface

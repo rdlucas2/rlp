@@ -15,7 +15,7 @@ The build loop is a scheduled agent run, every 4 hours, that works the rlp backl
 
 Issues, milestones and labels live in `rdlucas2/rlp`. Some issues are implemented in another repo, such as a Copier template (`rdlucas2/rlp-template-<name>`). The issue says which repo; #12, for example, belongs in `rdlucas2/rlp-template-python-fastapi`.
 
-- Clone that repo, branch off its latest `main`, and open the PR there. Put `Closes rdlucas2/rlp#<issue>` in the body and label it `agent:authored`.
+- Clone that repo, branch off its latest `main`, and push the branch there. Its `loop-pr` workflow opens the PR, as in step 5. Put `Closes rdlucas2/rlp#<issue>` in the body. A repo without a `loop-pr` workflow gets no PR: label the issue `needs:human` and say so.
 - Comment on the issue in `rdlucas2/rlp`, as for any other issue.
 - The open-PR limit counts `agent:authored` PRs across every repo the loop works in.
 - If the run can't push to that repo, don't work around it. Label the issue `needs:human`, comment the exact access that's missing (for example "add the repo to the build loop's scheduled task with push access"), and end the run.
@@ -57,11 +57,11 @@ If an issue is picked, go to step 5.
 ### 5. Do the work
 
 1. Label the issue `status:in-progress`.
-2. Branch off the latest `main` as `feat/<issue>-<slug>`, `fix/<issue>-<slug>` or `chore/<issue>-<slug>`.
+2. Branch off the latest `main` as `agent/feat/<issue>-<slug>`, `agent/fix/<issue>-<slug>` or `agent/chore/<issue>-<slug>`. The `agent/` prefix is what gets the PR opened as the rlp GitHub App (see step 6).
 3. Implement exactly the issue's tasks until its acceptance criteria hold. Stay inside its scope. Anything else goes in a new issue.
 4. Run what you can locally (`task lint`, `task test`, later `rlp` commands). If a tool can't run in the sandbox, say so in the PR. CI is the gate that counts.
 5. Commit in small, focused commits with the standard attribution trailers. Push.
-6. Open one PR: title in conventional style (`feat: …`), body with `Closes #<issue>`, then **What's in it**, **Verified**, **Not verified** and **Follow-ups**, plus **Gate changes** when the PR changes a gate (see Never). Label it `agent:authored`.
+6. Don't open the PR yourself. The first push of an `agent/**` branch runs the repo's `loop-pr` workflow, which opens the PR as the rlp GitHub App (`localrlp[bot]`) and labels it `agent:authored`, usually within two minutes. Ryan can approve a PR the App opened; he can't approve one opened under his own account. Find it with `GET repos/<owner>/<repo>/pulls?head=<owner>:<branch>`, then `PATCH` its title (conventional style, `feat: …`) and body: `Closes #<issue>`, then **What's in it**, **Verified**, **Not verified** and **Follow-ups**, plus **Gate changes** when the PR changes a gate (see Never). If no PR appears within about 10 minutes, label the issue `needs:human`, comment that the `loop-pr` workflow didn't open the PR (name the branch), and end the run. Don't open it under your own account instead.
 7. Wait for the PR's checks. If a check fails, fix it and push again, up to the attempt limit.
 8. Comment on the issue: what was done, the PR link, and anything Ryan needs to know.
 
