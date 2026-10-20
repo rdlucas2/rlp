@@ -1,7 +1,9 @@
-"""The platform REST API, /api/v1: the project record and lifecycle moves.
+"""The platform REST API, /api/v1: the project record, lifecycle moves and the repo indexer.
 
-Every route needs `Authorization: Bearer <token>`, compared in constant time
-with RLP_API_TOKEN. rlp is single-user until slice 6, so one token stands in
+Every route but the GitHub webhook needs `Authorization: Bearer <token>`,
+compared in constant time with RLP_API_TOKEN. The webhook,
+POST /api/v1/hooks/github, is checked by its X-Hub-Signature-256 against
+RLP_GITHUB_WEBHOOK_SECRET instead. rlp is single-user until slice 6, so one token stands in
 for users and roles. RLP_API_TOKEN_DISABLED=true opens the API for local
 development; without either, every request answers 401.
 
@@ -13,6 +15,8 @@ spec (`python -m rlp_platform openapi`); a test fails when they differ.
 from __future__ import annotations
 
 import hmac
+import json
+import logging
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Annotated, Any
@@ -23,8 +27,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session, sessionmaker
 
-from rlp_platform import lifecycle
-from rlp_platform.config import Settings
+from rlp_platform import indexer, lifecycle
+from rlp_platform.config import REPO_NAME, Settings
+from rlp_platform.github import GitHub, GitHubError, signature_ok
 from rlp_platform.models import Build, Component, Deployment, LifecycleTransition, Phase, Project, Repo
 from rlp_platform.store import (
     NotFound,
@@ -37,6 +42,8 @@ from rlp_platform.store import (
     session_factory,
     transitions,
 )
+
+log = logging.getLogger(__name__)
 
 PREFIX = "/api/v1"
 DEFAULT_LIMIT = 100
@@ -72,13 +79,24 @@ def get_session(request: Request) -> Iterator[Session]:
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
+IncludeRemoved = Annotated[bool, Query(description="Also list components that left rlp.yaml.")]
 Limit = Annotated[int, Query(ge=1, le=MAX_LIMIT, description="Return at most this many, newest first.")]
 
 router = APIRouter(prefix=PREFIX, dependencies=[Depends(require_token)])
+# GitHub can't send the bearer token; the webhook is checked by its signature instead.
+hooks = APIRouter(prefix=PREFIX)
 
 
 def make_session_factory(settings: Settings) -> sessionmaker[Session] | None:
     return session_factory(settings.database_url) if settings.database_url else None
+
+
+def github_client(request: Request) -> GitHub:
+    """A GitHub client from the settings; tests answer it from recorded responses (app.state.github_transport)."""
+    settings: Settings = request.app.state.settings
+    return GitHub(
+        settings.github_api_url, settings.github_token, transport=getattr(request.app.state, "github_transport", None)
+    )
 
 
 # --- schemas ---
@@ -125,6 +143,7 @@ class RepoOut(BaseModel):
     template_source: str | None
     template_version: str | None
     last_indexed_commit: str | None
+    index_error: str | None = Field(description="Why the last index attempt failed; null after a successful one.")
     created_at: datetime
     updated_at: datetime
 
@@ -135,6 +154,7 @@ class ComponentOut(BaseModel):
     language: str
     artifact_kind: str
     runtime_kind: str
+    removed_at: datetime | None = Field(description="When the component left rlp.yaml; null while it is declared.")
 
 
 class BuildOut(BaseModel):
@@ -188,6 +208,40 @@ class TransitionRequest(BaseModel):
     actor: str = Field(default="api", min_length=1, max_length=200, description="Who asked for the move.")
 
 
+class IndexResultOut(BaseModel):
+    repo: str
+    commit: str | None
+    status: str = Field(
+        description="indexed, invalid (rlp.yaml missing or invalid; the previous index stays) or failed"
+    )
+    project: str | None
+    components: list[str]
+    removed: list[str]
+    error: str | None
+
+
+class HookOut(BaseModel):
+    event: str
+    action: str = Field(description="indexed, renamed or ignored")
+    reason: str = ""
+    result: IndexResultOut | None = None
+
+
+class SyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str | None = Field(
+        default=None,
+        pattern=REPO_NAME.pattern,
+        description="OWNER/NAME to sync; every repo when left out (RLP_GITHUB_REPOS, else the installation's).",
+    )
+
+
+class SyncOut(BaseModel):
+    ok: bool
+    results: list[IndexResultOut]
+
+
 class TransitionRejected(BaseModel):
     detail: str
     project: str
@@ -220,6 +274,7 @@ def repo_out(r: Repo) -> RepoOut:
         template_source=r.template_source,
         template_version=r.template_version,
         last_indexed_commit=r.last_indexed_commit,
+        index_error=r.index_error,
         created_at=r.created_at,
         updated_at=r.updated_at,
     )
@@ -232,6 +287,7 @@ def component_out(c: Component) -> ComponentOut:
         language=c.language,
         artifact_kind=c.artifact_kind,
         runtime_kind=c.runtime_kind,
+        removed_at=c.removed_at,
     )
 
 
@@ -355,9 +411,11 @@ def list_project_repos(session: SessionDep, name: str) -> list[RepoOut]:
 
 
 @router.get("/projects/{name}/components", tags=["components"], responses=NOT_FOUND)
-def list_project_components(session: SessionDep, name: str) -> list[ComponentOut]:
+def list_project_components(
+    session: SessionDep, name: str, include_removed: IncludeRemoved = False
+) -> list[ComponentOut]:
     project = find_project(session, name)
-    return [component_out(c) for c in components.list_(session, project_id=project.id)]
+    return [component_out(c) for c in components.list_(session, project_id=project.id, include_removed=include_removed)]
 
 
 @router.get("/projects/{name}/builds", tags=["builds"], responses=NOT_FOUND)
@@ -438,9 +496,11 @@ def get_repo(session: SessionDep, owner: str, name: str) -> RepoOut:
 
 
 @router.get("/repos/{owner}/{name}/components", tags=["components"], responses=NOT_FOUND)
-def list_repo_components(session: SessionDep, owner: str, name: str) -> list[ComponentOut]:
+def list_repo_components(
+    session: SessionDep, owner: str, name: str, include_removed: IncludeRemoved = False
+) -> list[ComponentOut]:
     repo = find_repo(session, owner, name)
-    return [component_out(c) for c in components.list_(session, repo_id=repo.id)]
+    return [component_out(c) for c in components.list_(session, repo_id=repo.id, include_removed=include_removed)]
 
 
 @router.get("/repos/{owner}/{name}/builds", tags=["builds"], responses=NOT_FOUND)
@@ -455,3 +515,105 @@ def list_repo_deployments(
 ) -> list[DeploymentOut]:
     repo = find_repo(session, owner, name)
     return [deployment_out(session, d) for d in deployments.list_(session, repo_id=repo.id, limit=limit)]
+
+
+# --- repo indexer ---
+
+BAD_GATEWAY: dict[int | str, dict[str, Any]] = {502: {"model": Problem, "description": "GitHub could not be read"}}
+
+
+def ignored(event: str, reason: str) -> HookOut:
+    return HookOut(event=event, action="ignored", reason=reason)
+
+
+def _index(session: Session, gh: GitHub, run: Any) -> indexer.IndexResult:
+    """Run one index call and commit it; a GitHub failure changes nothing and answers 502."""
+    try:
+        result = run()
+    except GitHubError as err:
+        session.rollback()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(err)) from err
+    session.commit()
+    return result
+
+
+def on_push(session: Session, gh: GitHub, payload: dict[str, Any]) -> HookOut:
+    repo = payload.get("repository") or {}
+    full_name, branch = repo.get("full_name"), repo.get("default_branch")
+    ref, after = payload.get("ref"), payload.get("after")
+    if not full_name or not branch or not ref or not after:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="push payload lacks repository, ref or after")
+    if ref != f"refs/heads/{branch}":
+        return ignored("push", f"{ref} is not the default branch ({branch})")
+    if payload.get("deleted") or set(after) == {"0"}:
+        return ignored("push", "the push deleted the branch")
+    result = _index(session, gh, lambda: indexer.index_commit(session, gh, full_name, after, branch))
+    return HookOut(event="push", action="indexed", result=IndexResultOut(**result.as_dict()))
+
+
+def on_repository(session: Session, gh: GitHub, payload: dict[str, Any]) -> HookOut:
+    action = payload.get("action") or ""
+    full_name = (payload.get("repository") or {}).get("full_name")
+    if not full_name:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="repository payload lacks repository")
+    if action in ("deleted", "archived"):
+        # Retiring a repo's record is the retirement workflow's job, not the indexer's.
+        return ignored("repository", f"{action}: the index is kept")
+    if action == "renamed":
+        old_name = (((payload.get("changes") or {}).get("repository") or {}).get("name") or {}).get("from")
+        owner = full_name.partition("/")[0]
+        if old_name and indexer.rename(session, f"{owner}/{old_name}", full_name):
+            session.commit()
+    result = _index(session, gh, lambda: indexer.index_head(session, gh, full_name))
+    return HookOut(event="repository", action="indexed", reason=action, result=IndexResultOut(**result.as_dict()))
+
+
+async def raw_body(request: Request) -> bytes:
+    """The request body exactly as sent: the signature is over these bytes."""
+    return await request.body()
+
+
+@hooks.post(
+    "/hooks/github",
+    tags=["indexer"],
+    responses={
+        401: {"model": Problem, "description": "Missing or wrong X-Hub-Signature-256; nothing changed"},
+        **BAD_GATEWAY,
+    },
+)
+def github_webhook(request: Request, body: Annotated[bytes, Depends(raw_body)]) -> HookOut:
+    """GitHub's push and repository events. A push to the default branch re-indexes the repo at that commit."""
+    settings: Settings = request.app.state.settings
+    if not signature_ok(settings.github_webhook_secret, body, request.headers.get("X-Hub-Signature-256")):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="missing or wrong X-Hub-Signature-256")
+    event = request.headers.get("X-GitHub-Event", "")
+    if event == "ping":
+        return HookOut(event="ping", action="ignored", reason="pong")
+    if event not in ("push", "repository"):
+        return ignored(event, f"{event or 'no'} event; only push and repository are indexed")
+    try:
+        payload = json.loads(body)
+    except ValueError as err:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="the payload is not JSON") from err
+    if not isinstance(payload, dict):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="the payload is not a JSON object")
+    factory: sessionmaker[Session] | None = request.app.state.session_factory
+    if factory is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="no database: DATABASE_URL is not set")
+    with github_client(request) as gh, factory() as session:
+        if event == "push":
+            return on_push(session, gh, payload)
+        return on_repository(session, gh, payload)
+
+
+@router.post("/sync", tags=["indexer"], responses=BAD_GATEWAY)
+def sync_repos(request: Request, session: SessionDep, body: SyncRequest | None = None) -> SyncOut:
+    """Re-index repos at their default branch's head: one, or every repo the platform can see."""
+    settings: Settings = request.app.state.settings
+    with github_client(request) as gh:
+        try:
+            names = [body.repo] if body is not None and body.repo else indexer.sync_targets(gh, settings.github_repos)
+        except GitHubError as err:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(err)) from err
+        results = indexer.sync(session, gh, names)
+    return SyncOut(ok=all(r.ok for r in results), results=[IndexResultOut(**r.as_dict()) for r in results])

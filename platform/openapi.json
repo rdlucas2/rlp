@@ -103,6 +103,19 @@
             "title": "Name",
             "type": "string"
           },
+          "removed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the component left rlp.yaml; null while it is declared.",
+            "title": "Removed At"
+          },
           "repo": {
             "title": "Repo",
             "type": "string"
@@ -117,7 +130,8 @@
           "name",
           "language",
           "artifact_kind",
-          "runtime_kind"
+          "runtime_kind",
+          "removed_at"
         ],
         "title": "ComponentOut",
         "type": "object"
@@ -176,6 +190,111 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HookOut": {
+        "properties": {
+          "action": {
+            "description": "indexed, renamed or ignored",
+            "title": "Action",
+            "type": "string"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndexResultOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "event",
+          "action"
+        ],
+        "title": "HookOut",
+        "type": "object"
+      },
+      "IndexResultOut": {
+        "properties": {
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "components": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed",
+            "type": "array"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "status": {
+            "description": "indexed, invalid (rlp.yaml missing or invalid; the previous index stays) or failed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "commit",
+          "status",
+          "project",
+          "components",
+          "removed",
+          "error"
+        ],
+        "title": "IndexResultOut",
         "type": "object"
       },
       "Phase": {
@@ -350,6 +469,18 @@
             "title": "Full Name",
             "type": "string"
           },
+          "index_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the last index attempt failed; null after a successful one.",
+            "title": "Index Error"
+          },
           "last_indexed_commit": {
             "anyOf": [
               {
@@ -400,6 +531,7 @@
           "template_source",
           "template_version",
           "last_indexed_commit",
+          "index_error",
           "created_at",
           "updated_at"
         ],
@@ -435,6 +567,47 @@
           "messages"
         ],
         "title": "RuleResultOut",
+        "type": "object"
+      },
+      "SyncOut": {
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/IndexResultOut"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "results"
+        ],
+        "title": "SyncOut",
+        "type": "object"
+      },
+      "SyncRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "repo": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "OWNER/NAME to sync; every repo when left out (RLP_GITHUB_REPOS, else the installation's).",
+            "title": "Repo"
+          }
+        },
+        "title": "SyncRequest",
         "type": "object"
       },
       "TransitionOut": {
@@ -611,6 +784,48 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/hooks/github": {
+      "post": {
+        "description": "GitHub's push and repository events. A push to the default branch re-indexes the repo at that commit.",
+        "operationId": "github_webhook_api_v1_hooks_github_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HookOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or wrong X-Hub-Signature-256; nothing changed"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "GitHub could not be read"
+          }
+        },
+        "summary": "Github Webhook",
+        "tags": [
+          "indexer"
+        ]
+      }
+    },
     "/api/v1/projects": {
       "get": {
         "operationId": "list_projects_api_v1_projects_get",
@@ -933,6 +1148,18 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "description": "Also list components that left rlp.yaml.",
+            "in": "query",
+            "name": "include_removed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also list components that left rlp.yaml.",
+              "title": "Include Removed",
+              "type": "boolean"
             }
           }
         ],
@@ -1508,6 +1735,18 @@
               "title": "Name",
               "type": "string"
             }
+          },
+          {
+            "description": "Also list components that left rlp.yaml.",
+            "in": "query",
+            "name": "include_removed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also list components that left rlp.yaml.",
+              "title": "Include Removed",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1638,6 +1877,70 @@
         "summary": "List Repo Deployments",
         "tags": [
           "deployments"
+        ]
+      }
+    },
+    "/api/v1/sync": {
+      "post": {
+        "description": "Re-index repos at their default branch's head: one, or every repo the platform can see.",
+        "operationId": "sync_repos_api_v1_sync_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SyncRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "GitHub could not be read"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sync Repos",
+        "tags": [
+          "indexer"
         ]
       }
     },

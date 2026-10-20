@@ -47,6 +47,17 @@ components:
       - name: RLP_API_TOKEN_DISABLED
         description: Serve /api/v1 without a token (true or false). For local development only.
         default: "false"
+      - name: RLP_GITHUB_WEBHOOK_SECRET
+        description: Secret GitHub signs webhook deliveries with; POST /api/v1/hooks/github refuses every delivery (401) without it.
+        secret: true
+      - name: RLP_GITHUB_TOKEN
+        description: GitHub token the repo indexer reads rlp.yaml and .copier-answers.yml with (needs contents read).
+        secret: true
+      - name: RLP_GITHUB_REPOS
+        description: Repos (OWNER/NAME, comma-separated) the periodic sync re-indexes; unset, every repo of the token's installation.
+      - name: RLP_GITHUB_API_URL
+        description: GitHub REST API base URL; change it for GitHub Enterprise Server.
+        default: https://api.github.com
     services:
       - name: db
         kind: postgres
