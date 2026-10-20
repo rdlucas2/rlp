@@ -1071,11 +1071,12 @@ def report_render(ctx: click.Context, dest: Path, action: str) -> None:
 
 
 def platform_config(ctx: click.Context) -> platform_api.Config:
+    """The platform settings; a config problem exits 2 (fail raises click's Exit)."""
     try:
-        return platform_api.load_config()
+        config = platform_api.load_config()
     except platform_api.ConfigError as err:
         fail(ctx, str(err))
-    raise AssertionError("unreachable")  # pragma: no cover
+    return config
 
 
 def platform_call(ctx: click.Context, call):
@@ -1266,7 +1267,7 @@ def default_actor() -> str:
     """Who the move is recorded as: the local login name."""
     try:
         return getpass.getuser() or "rlp-cli"
-    except (ImportError, KeyError, OSError):  # pragma: no cover - no login name in some containers
+    except (ImportError, KeyError, OSError):  # no login name in some containers
         return "rlp-cli"
 
 

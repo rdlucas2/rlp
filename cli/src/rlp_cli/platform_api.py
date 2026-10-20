@@ -21,7 +21,7 @@ import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 from urllib.parse import quote
 
 import httpx
@@ -169,7 +169,7 @@ def _read_file(path: Path) -> dict[str, Any]:
 
 def _private(path: Path) -> bool:
     if os.name != "posix":
-        return True  # pragma: no cover - Windows has no mode bits to check
+        return True  # Windows has no mode bits to check
     return not stat.S_IMODE(path.stat().st_mode) & 0o077
 
 
@@ -240,7 +240,7 @@ class PlatformClient:
             body = resp.json()
         except ValueError:
             body = resp.text
-        if resp.is_success:
+        if 200 <= resp.status_code < 300:
             return body
         if resp.status_code == 401:
             raise PlatformError("the platform refused the token (401): check RLP_PLATFORM_TOKEN", 401, body)
@@ -291,5 +291,5 @@ class PlatformClient:
             )
         except PlatformError as err:
             if err.status == 409 and isinstance(err.body, dict) and "failures" in err.body:
-                raise TransitionRejected(err.body) from err  # type: ignore[arg-type]
+                raise TransitionRejected(cast(Rejection, err.body)) from err
             raise

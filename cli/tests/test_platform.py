@@ -122,7 +122,7 @@ class FakePlatform:
                     ],
                 )
             return httpx.Response(200, json=repo)
-        return httpx.Response(500, text="the fake has no such route")  # pragma: no cover
+        return httpx.Response(500, text="the fake has no such route")
 
     def move(self, project: dict, body: dict) -> httpx.Response:
         to = body["to"]
@@ -215,7 +215,7 @@ def test_config_from_the_file_with_env_overriding_one_value(clean_env, monkeypat
 
 def test_config_defaults_to_home(monkeypatch, tmp_path):
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(platform_api.Path, "home", lambda: tmp_path)
     assert platform_api.config_path() == tmp_path / ".config" / "rlp" / "config.yaml"
 
 
@@ -266,6 +266,7 @@ def test_config_show_json(clean_env):
     assert doc["platform"] == {"url": {"value": None, "source": "unset"}, "token": {"value": None, "source": "unset"}}
 
 
+@pytest.mark.skipif(os.name != "posix", reason="mode bits are POSIX")
 def test_config_show_reports_a_bad_file(clean_env):
     write_config(clean_env, {"platform": {"token": KEY}}, mode=0o640)
     result = run(None, "config", "show")
@@ -456,6 +457,21 @@ def test_lifecycle_move_json_and_show_without_history(configured, fake):
     doc = json.loads(result.output)
     assert (doc["ok"], doc["transition"]["to_phase"]) == (True, "designed")
     assert run(fake, "lifecycle", "show", "orders").output == "orders: in-dev\n"
+
+
+def test_lifecycle_move_without_a_login_name(configured, fake, monkeypatch):
+    def no_user():
+        raise OSError("no login name")
+
+    monkeypatch.setattr("getpass.getuser", no_user)
+    assert run(fake, "lifecycle", "move", "billing", "designed", "--reason", "x").exit_code == 0
+    assert json.loads(fake.requests[-1].content)["actor"] == "rlp-cli"
+
+
+def test_the_fake_rejects_unknown_routes(fake):
+    with platform_api.PlatformClient(URL, KEY, transport=fake.transport()) as client, pytest.raises(platform_api.PlatformError) as err:
+        client._call("GET", "/nothing")
+    assert err.value.status == 500
 
 
 def test_lifecycle_move_needs_a_reason(configured, fake):
