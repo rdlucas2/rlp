@@ -4,6 +4,11 @@ name: pipeline
 
 on:
   pull_request:
+    # labeled and unlabeled: the agent:authored label decides whether the
+    # rlp.agent rules apply, and a PR is often labelled after it opens.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]  # golden's gate-review re-checks on each review
   push:
     branches: [main]
     tags: ["v*"]
@@ -14,10 +19,11 @@ permissions:
 jobs:
   golden:
     # Pin both the workflow and the CLI to the same rlp commit.
-    uses: rdlucas2/rlp/.github/workflows/golden.yml@0a52b6cd26815b5682e8502b8333000db7a52a5d
+    uses: rdlucas2/rlp/.github/workflows/golden.yml@7c397bc82c6bdf58d7f57cde569ecac6a359fdc3
     with:
-      rlp-version: "git:0a52b6cd26815b5682e8502b8333000db7a52a5d"
+      rlp-version: "git:7c397bc82c6bdf58d7f57cde569ecac6a359fdc3"
     permissions:
       contents: write          # publish: attach zips and jars to GitHub Releases
       packages: write          # publish: push images to GHCR
       security-events: write   # gates: upload SARIF to code scanning
+      pull-requests: read      # gate-review: read the PR's reviews

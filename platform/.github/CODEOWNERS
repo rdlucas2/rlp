@@ -1,0 +1,36 @@
+# Gate files: a change to any of these needs a code owner's review.
+#
+# rlp's golden pipeline flags an agent-authored change to these paths (the
+# rlp.agent rules, RLP-A001 to RLP-A003) and its gate-review job holds the PR
+# until a human who is not the PR author approves its head commit. CODEOWNERS
+# routes that review; it blocks a merge only once "Require review from Code
+# Owners" is on for main. Set the owners with the code_owners Copier answer.
+
+# Workflows and CODEOWNERS itself
+**/.github/workflows/       @rdlucas2
+/.github/CODEOWNERS         @rdlucas2
+
+# Policy
+policy/                     @rdlucas2
+
+# Vulnerability exceptions
+**/.rlp/vex.yaml            @rdlucas2
+
+# Contracts and the standard verbs
+rlp.yaml                    @rdlucas2
+Taskfile.yml                @rdlucas2
+Taskfile.yaml               @rdlucas2
+taskfile.yml                @rdlucas2
+taskfile.yaml               @rdlucas2
+
+# Pre-commit, Semgrep, Trivy and coverage settings
+.pre-commit-config.yaml     @rdlucas2
+.semgrep.yml                @rdlucas2
+.semgrep.yaml               @rdlucas2
+.semgrepignore              @rdlucas2
+.semgrep/                   @rdlucas2
+trivy.yaml                  @rdlucas2
+trivy.yml                   @rdlucas2
+.trivyignore                @rdlucas2
+.trivyignore.yaml           @rdlucas2
+.coveragerc                 @rdlucas2
