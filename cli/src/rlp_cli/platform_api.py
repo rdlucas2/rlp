@@ -66,6 +66,7 @@ class Repo(TypedDict):
     template_source: str | None
     template_version: str | None
     last_indexed_commit: str | None
+    index_error: str | None
     created_at: str
     updated_at: str
 
@@ -76,6 +77,22 @@ class Component(TypedDict):
     language: str
     artifact_kind: str
     runtime_kind: str
+    removed_at: str | None
+
+
+class IndexResult(TypedDict):
+    repo: str
+    commit: str | None
+    status: str  # indexed, invalid or failed
+    project: str | None
+    components: list[str]
+    removed: list[str]
+    error: str | None
+
+
+class SyncResult(TypedDict):
+    ok: bool
+    results: list[IndexResult]
 
 
 class RuleResult(TypedDict):
@@ -277,6 +294,12 @@ class PlatformClient:
 
     def list_repo_components(self, full_name: str) -> list[Component]:
         return self._call("GET", _repo_path(full_name) + "/components")
+
+    def sync(self, full_name: str | None = None) -> SyncResult:
+        """Re-index one repo, or every repo the platform can see, from GitHub."""
+        if full_name is not None:
+            _repo_path(full_name)  # reject a malformed name before calling
+        return self._call("POST", "/sync", json={"repo": full_name} if full_name else None)
 
     # lifecycle
 

@@ -1108,7 +1108,7 @@ def print_fields(doc: dict, keys: list[str]) -> None:
 
 
 PROJECT_FIELDS = ["name", "phase", "owner", "description", "dashboard_url", "created_at", "updated_at"]
-REPO_FIELDS = ["full_name", "project", "default_branch", "template_source", "template_version", "last_indexed_commit", "created_at", "updated_at"]
+REPO_FIELDS = ["full_name", "project", "default_branch", "template_source", "template_version", "last_indexed_commit", "index_error", "created_at", "updated_at"]
 
 
 @cli.group(name="config")
@@ -1240,6 +1240,31 @@ def repo_show(ctx: click.Context, full_name: str) -> None:
     if repo_components:
         click.echo("")
         print_table([[c["name"], c["language"], c["artifact_kind"], c["runtime_kind"]] for c in repo_components], ["COMPONENT", "LANGUAGE", "ARTIFACT", "RUNTIME"])
+
+
+@repo_group.command(name="sync")
+@click.argument("full_name", metavar="[OWNER/NAME]", required=False)
+@output_option
+@click.pass_context
+def repo_sync(ctx: click.Context, full_name: str | None) -> None:
+    """Re-index a repo, or every repo the platform can see, from GitHub. Exits 1 if any repo wasn't indexed."""
+    doc = platform_call(ctx, lambda c: c.sync(full_name))
+    if ctx.obj["output"] == "json":
+        emit_json(doc)
+    else:
+        for r in doc["results"]:
+            line = f"{r['repo']}: {r['status']}"
+            if r["status"] == "indexed":
+                line += f" at {r['commit']} (project {r['project']}; components {', '.join(r['components']) or '-'})"
+                if r["removed"]:
+                    line += f"; removed {', '.join(r['removed'])}"
+            click.echo(line)
+            if r["error"]:
+                for error_line in r["error"].splitlines():
+                    click.echo(f"  {error_line}")
+        if not doc["results"]:
+            click.echo("no repos to sync")
+    ctx.exit(0 if doc["ok"] else 1)
 
 
 @cli.group(name="lifecycle")

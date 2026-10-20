@@ -43,6 +43,7 @@ class FakePlatform:
                 "template_source": "gh:rdlucas2/rlp-template-python-fastapi",
                 "template_version": "v1",
                 "last_indexed_commit": None,
+                "index_error": None,
                 "created_at": NOW,
                 "updated_at": NOW,
             }
@@ -99,6 +100,8 @@ class FakePlatform:
                 return httpx.Response(200, json=self.history[project["name"]])
             if parts[2:] == ["transitions"] and method == "POST":
                 return self.move(project, body)
+        if parts == ["sync"] and method == "POST":
+            return self.sync(body)
         if parts == ["repos"]:
             wanted = request.url.params.get("project")
             if wanted is not None and wanted not in self.projects:
@@ -118,11 +121,32 @@ class FakePlatform:
                             "language": "python",
                             "artifact_kind": "container-image",
                             "runtime_kind": "container-service",
+                            "removed_at": None,
                         }
                     ],
                 )
             return httpx.Response(200, json=repo)
         return httpx.Response(500, text="the fake has no such route")
+
+    def sync(self, body: dict | None) -> httpx.Response:
+        """Index acme/orders-api; any other repo has an invalid rlp.yaml, and acme/down can't be read."""
+        names = [body["repo"]] if body else [*self.repos, "acme/down"]
+        results = []
+        for name in names:
+            if name in self.repos:
+                self.repos[name]["last_indexed_commit"] = "abc123"
+                results.append(
+                    {"repo": name, "commit": "abc123", "status": "indexed", "project": self.repos[name]["project"],
+                     "components": ["api"], "removed": ["worker"], "error": None}
+                )
+            elif name == "acme/down":
+                results.append({"repo": name, "commit": None, "status": "failed", "project": None,
+                                "components": [], "removed": [], "error": "GET /repos/acme/down: GitHub answered 500"})
+            else:
+                results.append({"repo": name, "commit": "def456", "status": "invalid", "project": None,
+                                "components": [], "removed": [],
+                                "error": "at def456: rlp.yaml components.0: 'runtime' is a required property"})
+        return httpx.Response(200, json={"ok": all(r["status"] == "indexed" for r in results), "results": results})
 
     def move(self, project: dict, body: dict) -> httpx.Response:
         to = body["to"]
@@ -409,6 +433,48 @@ def test_repo_show_unknown_and_malformed(configured, fake):
     assert result.exit_code == 2
     assert "a repo is OWNER/NAME" in result.output
     assert fake.requests[-1].url.path == "/api/v1/repos/acme/nope"
+
+
+def test_repo_show_prints_the_index_error(configured, fake):
+    fake.repos["acme/orders-api"]["index_error"] = "at def456: no rlp.yaml at the repo root"
+    result = run(fake, "repo", "show", "acme/orders-api")
+    assert "index_error          at def456: no rlp.yaml at the repo root" in result.output
+
+
+def test_repo_sync_one(configured, fake):
+    result = run(fake, "repo", "sync", "acme/orders-api")
+    assert result.exit_code == 0, result.output
+    assert result.output == "acme/orders-api: indexed at abc123 (project orders; components api); removed worker\n"
+    assert json.loads(fake.requests[-1].content) == {"repo": "acme/orders-api"}
+
+
+def test_repo_sync_all_exits_1_when_one_fails(configured, fake):
+    result = run(fake, "repo", "sync")
+    assert result.exit_code == 1
+    assert "acme/down: failed\n  GET /repos/acme/down: GitHub answered 500" in result.output
+    assert fake.requests[-1].content == b""
+
+
+def test_repo_sync_invalid_json(configured, fake):
+    result = run(fake, "repo", "sync", "acme/broken", "-o", "json")
+    assert result.exit_code == 1
+    doc = json.loads(result.output)
+    assert doc["ok"] is False
+    assert doc["results"][0]["error"].startswith("at def456: rlp.yaml components.0")
+
+
+def test_repo_sync_rejects_a_malformed_name(configured, fake):
+    result = run(fake, "repo", "sync", "no-slash")
+    assert result.exit_code == 2
+    assert "a repo is OWNER/NAME" in result.output
+    assert fake.requests == []
+
+
+def test_repo_sync_with_nothing_to_sync(configured, fake):
+    fake.repos.clear()
+    fake.sync = lambda body: httpx.Response(200, json={"ok": True, "results": []})
+    result = run(fake, "repo", "sync")
+    assert (result.exit_code, result.output) == (0, "no repos to sync\n")
 
 
 # --- lifecycle ---
