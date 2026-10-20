@@ -9,6 +9,7 @@ A FastAPI service rendered from the [rlp python-fastapi template](https://github
 | `/healthz` | Liveness: the process is up |
 | `/readyz` | Readiness: `DATABASE_URL`, when set, is reachable |
 | `/hello/{name}` | Sample route |
+| `/api/v1/...` | The project record and lifecycle moves, behind a bearer token; spec in [`openapi.json`](openapi.json), guide in [docs/platform.md](../docs/platform.md) |
 
 ## Configuration
 
@@ -20,6 +21,8 @@ Only environment variables, as declared under `config` in `rlp.yaml`:
 | `HOST` | `127.0.0.1` (`0.0.0.0` in the image) | Interface to listen on |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warning`, `error` or `critical` |
 | `DATABASE_URL` | unset | Postgres connection string, provided by the `db` service |
+| `RLP_API_TOKEN` | unset | Bearer token for `/api/v1`; the service won't start without it unless `RLP_API_TOKEN_DISABLED=true` |
+| `RLP_API_TOKEN_DISABLED` | `false` | `true` serves `/api/v1` without a token, for local development |
 | `RLP_MIGRATE_ON_START` | `false` | `true` applies pending migrations before the service starts; needs `DATABASE_URL` |
 | `OTEL_*` | unset | Standard OpenTelemetry settings, for example `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` |
 
