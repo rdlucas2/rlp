@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
+BOOLEANS = {"true": True, "false": False}
 
 
 class ConfigError(ValueError):
@@ -19,6 +20,7 @@ class Settings:
     port: int
     log_level: str
     database_url: str | None
+    migrate_on_start: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -33,10 +35,18 @@ class Settings:
         log_level = env.get("LOG_LEVEL", "info").lower()
         if log_level not in LOG_LEVELS:
             raise ConfigError(f"LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}, got {log_level!r}")
+        raw_migrate = env.get("RLP_MIGRATE_ON_START", "false").strip().lower()
+        if raw_migrate not in BOOLEANS:
+            raise ConfigError(f"RLP_MIGRATE_ON_START must be true or false, got {raw_migrate!r}")
+        migrate_on_start = BOOLEANS[raw_migrate]
+        database_url = env.get("DATABASE_URL") or None
+        if migrate_on_start and database_url is None:
+            raise ConfigError("RLP_MIGRATE_ON_START=true needs DATABASE_URL")
         return cls(
             # Loopback by default; the container image sets HOST so the service is reachable there.
             host=env.get("HOST", "127.0.0.1"),
             port=port,
             log_level=log_level,
-            database_url=env.get("DATABASE_URL") or None,
+            database_url=database_url,
+            migrate_on_start=migrate_on_start,
         )

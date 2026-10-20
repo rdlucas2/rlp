@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-import pytest
-from fastapi.testclient import TestClient
+import os
 
+import pytest
+import sqlalchemy as sa
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from rlp_platform import db
 from rlp_platform.app import create_app
 from rlp_platform.config import Settings
 
@@ -21,3 +26,46 @@ def settings() -> Settings:
 @pytest.fixture
 def client(settings) -> TestClient:
     return TestClient(create_app(settings))
+
+
+@pytest.fixture(scope="session")
+def postgres_url():
+    """A Postgres 17 server for the database tests.
+
+    testcontainers starts one in Docker (CI runners have it). Set
+    RLP_TEST_DATABASE_URL to use a server you already run instead; the tests
+    drop and recreate its public schema.
+    """
+    url = os.environ.get("RLP_TEST_DATABASE_URL")
+    if url:
+        yield url
+        return
+    from testcontainers.community.postgres import PostgresContainer
+
+    with PostgresContainer("postgres:17", driver="psycopg") as container:
+        yield container.get_connection_url()
+
+
+@pytest.fixture
+def empty_db(postgres_url):
+    """The test server with an empty public schema, so every test migrates from nothing."""
+    engine = sa.create_engine(db.engine_url(postgres_url))
+    with engine.begin() as connection:
+        connection.execute(sa.text("DROP SCHEMA public CASCADE"))
+        connection.execute(sa.text("CREATE SCHEMA public"))
+    engine.dispose()
+    return postgres_url
+
+
+@pytest.fixture
+def migrated_db(empty_db):
+    db.upgrade(empty_db)
+    return empty_db
+
+
+@pytest.fixture
+def session(migrated_db):
+    engine = db.make_engine(migrated_db)
+    with Session(engine) as s:
+        yield s
+    engine.dispose()

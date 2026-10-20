@@ -49,6 +49,9 @@ components:
       - name: LOG_LEVEL
         description: Log level for the JSON logger (debug, info, warning, error, critical).
         default: info
+      - name: RLP_MIGRATE_ON_START
+        description: Apply pending database migrations at startup (true or false); `python -m rlp_platform migrate` runs them on demand.
+        default: "false"
     telemetry:
       enabled: true
       serviceName: rlp-platform

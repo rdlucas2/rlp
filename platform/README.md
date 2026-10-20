@@ -20,9 +20,35 @@ Only environment variables, as declared under `config` in `rlp.yaml`:
 | `HOST` | `127.0.0.1` (`0.0.0.0` in the image) | Interface to listen on |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warning`, `error` or `critical` |
 | `DATABASE_URL` | unset | Postgres connection string, provided by the `db` service |
+| `RLP_MIGRATE_ON_START` | `false` | `true` applies pending migrations before the service starts; needs `DATABASE_URL` |
 | `OTEL_*` | unset | Standard OpenTelemetry settings, for example `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` |
 
 Logs are JSON, one object per line on stdout, with `trace_id` and `span_id` when a span is active.
+
+## Project record
+
+The platform keeps the project record in Postgres (17 locally, RDS in AWS). The models are in [`src/rlp_platform/models.py`](src/rlp_platform/models.py); typed create, get, list and update functions for each table are in [`src/rlp_platform/store/`](src/rlp_platform/store/).
+
+| Table | Purpose |
+| --- | --- |
+| `projects` | The root record: name (unique), description, owner, lifecycle phase, dashboard URL |
+| `repos` | A git repository (full name, unique) linked to its project by `metadata.project` in its `rlp.yaml`, with its default branch, template source and version, and the last indexed commit |
+| `components` | A component a repo's `rlp.yaml` declares: name (unique per repo), language, artifact kind, runtime kind |
+| `artifacts` | What a component's `package` verb produced: kind, reference (an image digest, a zip URI), created and expiry times |
+| `builds` | One pipeline run on a repo commit: branch, workflow run URL, each stage's result, whether it passed, start and finish times |
+| `deployments` | An artifact of a component deployed to an environment, with its status and time |
+| `lifecycle_transitions` | Each phase change of a project: from and to phase, actor, reason, the entry rules' results, time |
+
+The phase is a Postgres enum: `proposed`, `designed`, `scaffolded`, `in-dev`, `live`, `deprecated`, `retired`. Every foreign key is `RESTRICT`, so deleting a record that others point at (a project that still has repos, say) fails instead of cascading.
+
+Migrations are Alembic revisions in [`migrations/`](migrations/), shipped inside the package so the image can run them:
+
+```sh
+python -m rlp_platform migrate            # apply pending migrations to $DATABASE_URL
+python -m rlp_platform migrate --check    # also fail if the models and migrations disagree
+```
+
+After changing a model, add a revision and commit it with the change; `migrate --check` and the tests fail until you do. The tests start Postgres 17 with testcontainers, so they need Docker; set `RLP_TEST_DATABASE_URL` to use a server you already run instead (the tests empty its `public` schema).
 
 ## Standard verbs
 
