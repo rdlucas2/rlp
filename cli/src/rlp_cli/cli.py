@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import getpass
 import json
 import os
 import sys
@@ -16,7 +17,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, gate_review, infra, loop, loop_pr, loop_summary, onboard, pipeline, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, gate_review, infra, loop, loop_pr, loop_summary, onboard, pipeline, platform_api, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -1064,6 +1065,236 @@ def report_render(ctx: click.Context, dest: Path, action: str) -> None:
             click.echo(str(p))
         click.echo(f"{action}: {dest.as_posix()} {'is valid' if not problems else 'has contract problems'}")
     ctx.exit(1 if problems else 0)
+
+
+# --- platform: config, project, repo, lifecycle ---
+
+
+def platform_config(ctx: click.Context) -> platform_api.Config:
+    """The platform settings; a config problem exits 2 (fail raises click's Exit)."""
+    try:
+        config = platform_api.load_config()
+    except platform_api.ConfigError as err:
+        fail(ctx, str(err))
+    return config
+
+
+def platform_call(ctx: click.Context, call):
+    """Run `call(client)` against the configured platform; exit 2 on a setup problem, 1 when the platform says no."""
+    config = platform_config(ctx)
+    try:
+        with platform_api.PlatformClient.from_config(config, transport=ctx.obj.get("platform_transport")) as client:
+            return call(client)
+    except platform_api.ConfigError as err:
+        fail(ctx, str(err))
+    except platform_api.TransitionRejected:
+        raise
+    except platform_api.PlatformError as err:
+        # Not found, conflicts and validation errors are the answer; no platform or a bad token is setup.
+        fail(ctx, str(err), code=1 if err.status is not None and err.status != 401 else 2)
+
+
+def print_table(rows: list[list[str]], headers: list[str]) -> None:
+    widths = [max(len(str(v)) for v in col) for col in zip(headers, *rows, strict=False)]
+    for row in [headers, *rows]:
+        click.echo("  ".join(str(v).ljust(w) for v, w in zip(row, widths, strict=False)).rstrip())
+
+
+def print_fields(doc: dict, keys: list[str]) -> None:
+    width = max(len(k) for k in keys)
+    for k in keys:
+        value = doc.get(k)
+        click.echo(f"{k.ljust(width)}  {'-' if value in (None, '') else value}")
+
+
+PROJECT_FIELDS = ["name", "phase", "owner", "description", "dashboard_url", "created_at", "updated_at"]
+REPO_FIELDS = ["full_name", "project", "default_branch", "template_source", "template_version", "last_indexed_commit", "created_at", "updated_at"]
+
+
+@cli.group(name="config")
+def config_group() -> None:
+    """Where this CLI finds the rlp platform."""
+
+
+@config_group.command(name="show")
+@output_option
+@click.pass_context
+def config_show(ctx: click.Context) -> None:
+    """Print the platform URL and (masked) token, and where each came from."""
+    config = platform_config(ctx)
+    doc = {
+        "path": config.path.as_posix(),
+        "platform": {
+            "url": {"value": config.url, "source": config.sources["url"]},
+            "token": {"value": platform_api.mask(config.token), "source": config.sources["token"]},
+        },
+    }
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, **doc})
+        return
+    click.echo(f"config file     {doc['path']}")
+    for key in ("url", "token"):
+        entry = doc["platform"][key]
+        click.echo(f"platform.{key.ljust(6)}  {entry['value'] or '-'}  ({entry['source']})")
+
+
+@cli.group(name="project")
+def project_group() -> None:
+    """Projects in the platform's record."""
+
+
+@project_group.command(name="list")
+@click.option("--phase", default=None, help="Only projects in this phase, e.g. in-dev.")
+@output_option
+@click.pass_context
+def project_list(ctx: click.Context, phase: str | None) -> None:
+    """List projects, by name."""
+    rows = platform_call(ctx, lambda c: c.list_projects(phase))
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "projects": rows})
+        return
+    print_table([[p["name"], p["phase"], p["owner"] or "-"] for p in rows], ["NAME", "PHASE", "OWNER"])
+
+
+@project_group.command(name="show")
+@click.argument("name")
+@output_option
+@click.pass_context
+def project_show(ctx: click.Context, name: str) -> None:
+    """Show a project and its repos."""
+    project, project_repos = platform_call(ctx, lambda c: (c.get_project(name), c.list_repos(name)))
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "project": project, "repos": project_repos})
+        return
+    print_fields({**project, "repos": ", ".join(r["full_name"] for r in project_repos)}, [*PROJECT_FIELDS, "repos"])
+
+
+def emit_project(ctx: click.Context, project: dict, action: str) -> None:
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "project": project})
+    else:
+        click.echo(f"{action} project {project['name']}")
+        print_fields(project, PROJECT_FIELDS)
+
+
+@project_group.command(name="create")
+@click.argument("name")
+@click.option("--owner", default="", help="Who owns it; live needs one.")
+@click.option("--description", default="", help="What it is; designed needs one.")
+@click.option("--dashboard-url", default=None, help="Its dashboard; live needs one.")
+@output_option
+@click.pass_context
+def project_create(ctx: click.Context, name: str, owner: str, description: str, dashboard_url: str | None) -> None:
+    """Create a project. It starts in the proposed phase."""
+    project = platform_call(ctx, lambda c: c.create_project(name, owner=owner, description=description, dashboard_url=dashboard_url))
+    emit_project(ctx, project, "created")
+
+
+@project_group.command(name="update")
+@click.argument("name")
+@click.option("--owner", default=None, help="New owner.")
+@click.option("--description", default=None, help="New description.")
+@click.option("--dashboard-url", default=None, help="New dashboard URL; an empty value clears it.")
+@output_option
+@click.pass_context
+def project_update(ctx: click.Context, name: str, owner: str | None, description: str | None, dashboard_url: str | None) -> None:
+    """Change a project's owner, description or dashboard URL. Use rlp lifecycle move for its phase."""
+    fields: dict[str, str | None] = {k: v for k, v in (("owner", owner), ("description", description)) if v is not None}
+    if dashboard_url is not None:
+        fields["dashboard_url"] = dashboard_url or None
+    if not fields:
+        fail(ctx, "nothing to change: pass --owner, --description or --dashboard-url")
+    project = platform_call(ctx, lambda c: c.update_project(name, **fields))
+    emit_project(ctx, project, "updated")
+
+
+@cli.group(name="repo")
+def repo_group() -> None:
+    """Repos in the platform's record."""
+
+
+@repo_group.command(name="list")
+@click.option("--project", default=None, help="Only this project's repos.")
+@output_option
+@click.pass_context
+def repo_list(ctx: click.Context, project: str | None) -> None:
+    """List repos, by full name."""
+    rows = platform_call(ctx, lambda c: c.list_repos(project))
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "repos": rows})
+        return
+    print_table([[r["full_name"], r["project"], r["default_branch"]] for r in rows], ["REPO", "PROJECT", "BRANCH"])
+
+
+@repo_group.command(name="show")
+@click.argument("full_name", metavar="OWNER/NAME")
+@output_option
+@click.pass_context
+def repo_show(ctx: click.Context, full_name: str) -> None:
+    """Show a repo and its components."""
+    repo, repo_components = platform_call(ctx, lambda c: (c.get_repo(full_name), c.list_repo_components(full_name)))
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "repo": repo, "components": repo_components})
+        return
+    print_fields(repo, REPO_FIELDS)
+    if repo_components:
+        click.echo("")
+        print_table([[c["name"], c["language"], c["artifact_kind"], c["runtime_kind"]] for c in repo_components], ["COMPONENT", "LANGUAGE", "ARTIFACT", "RUNTIME"])
+
+
+@cli.group(name="lifecycle")
+def lifecycle_group() -> None:
+    """A project's lifecycle phase: show it and its history, or move it."""
+
+
+@lifecycle_group.command(name="show")
+@click.argument("project")
+@output_option
+@click.pass_context
+def lifecycle_show(ctx: click.Context, project: str) -> None:
+    """Print a project's phase and every move it has made, oldest first."""
+    record, history = platform_call(ctx, lambda c: (c.get_project(project), c.list_transitions(project)))
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "project": record["name"], "phase": record["phase"], "history": history})
+        return
+    click.echo(f"{record['name']}: {record['phase']}")
+    if history:
+        click.echo("")
+        print_table([[t["at"], t["from_phase"] or "-", t["to_phase"], t["actor"], t["reason"] or "-"] for t in history], ["AT", "FROM", "TO", "BY", "REASON"])
+
+
+def default_actor() -> str:
+    """Who the move is recorded as: the local login name."""
+    try:
+        return getpass.getuser() or "rlp-cli"
+    except (ImportError, KeyError, OSError):  # no login name in some containers
+        return "rlp-cli"
+
+
+@lifecycle_group.command(name="move")
+@click.argument("project")
+@click.argument("phase")
+@click.option("--reason", required=True, help="Why; recorded with the move.")
+@output_option
+@click.pass_context
+def lifecycle_move(ctx: click.Context, project: str, phase: str, reason: str) -> None:
+    """Move PROJECT to PHASE if every entry rule passes. A rejected move exits 1 and lists the failing rules."""
+    actor = default_actor()
+    try:
+        moved = platform_call(ctx, lambda c: c.move(project, phase, reason=reason, actor=actor))
+    except platform_api.TransitionRejected as err:
+        if ctx.obj["output"] == "json":
+            emit_json({"ok": False, "error": str(err), **err.rejection})
+        else:
+            click.echo(f"{project}: {err.rejection['from_phase']} -> {phase} rejected", err=True)
+            for rule in err.failures:
+                for message in rule["messages"] or [f"[{rule['rule']}] {rule['description']}"]:
+                    click.echo(f"  {message}", err=True)
+        ctx.exit(1)
+    if ctx.obj["output"] == "json":
+        emit_json({"ok": True, "project": project, "transition": moved})
+    else:
+        click.echo(f"{project}: {moved['from_phase'] or '-'} -> {moved['to_phase']}")
 
 
 def main() -> None:

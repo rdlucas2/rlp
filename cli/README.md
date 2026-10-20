@@ -53,6 +53,9 @@ Besides itself, `rlp` needs only go-task (for verbs that run `task <name>`), git
 | `rlp loop status` | Show whether each loop kind is on for the repo, and why |
 | `rlp loop escalate STATE_FILE [--post]` | Render the escalation issue for a loop that gave up; with `--post`, open it on GitHub or comment on the open one |
 | `rlp loop pr STATE_FILE [--post]` | Render the pull request for a loop run that fixed its gate; with `--post`, open it from the loop branch and label it `agent:authored` |
+| `rlp config show` | Show where the CLI finds the platform API (`RLP_PLATFORM_URL`/`RLP_PLATFORM_TOKEN`, else `~/.config/rlp/config.yaml`), token masked ([docs/platform.md](../docs/platform.md)) |
+| `rlp project list\|show\|create\|update`, `rlp repo list\|show` | Read and edit the platform's project record ([docs/platform.md](../docs/platform.md)) |
+| `rlp lifecycle show\|move PROJECT [PHASE --reason R]` | A project's phase and history, or move it; a rejected move exits 1 and prints the failing rules |
 | `rlp pipeline stages\|run\|summary` | Run the golden pipeline's gates locally, exactly as CI does ([docs/pipeline.md](../docs/pipeline.md)) |
 
 Verb overrides are split with POSIX shell rules on every OS and run without a shell: no pipes, globs or variable expansion. Put anything more complex in a Taskfile task. Write paths with forward slashes.

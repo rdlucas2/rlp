@@ -65,7 +65,7 @@ Like the store, it flushes but never commits: the caller owns the transaction. T
 ]
 ```
 
-The HTTP endpoint and the `rlp lifecycle` commands that call it are #92.
+`POST /api/v1/projects/{name}/transitions` and `rlp lifecycle move` call it; see [platform.md](platform.md).
 
 ## OPA in the platform
 

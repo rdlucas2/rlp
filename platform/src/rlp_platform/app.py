@@ -1,14 +1,15 @@
-"""The FastAPI application: health endpoints and one sample route."""
+"""The FastAPI application: health endpoints, the /api/v1 routes (rlp_platform.api) and one sample route."""
 
 from __future__ import annotations
 
+import json
 import logging
 import socket
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, FastAPI, Request, Response, status
 
-from rlp_platform import __version__, telemetry
+from rlp_platform import __version__, api, telemetry
 from rlp_platform.config import Settings
 
 log = logging.getLogger(__name__)
@@ -62,9 +63,18 @@ def hello(name: str) -> dict[str, str]:
     return {"message": f"hello, {name}"}
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, opa_path: str | None = None) -> FastAPI:
+    """The service. `opa_path` is the opa binary the lifecycle runs; the default is the one on PATH."""
     app = FastAPI(title="rlp-platform", version=__version__)
     app.state.settings = settings or Settings.from_env()
+    app.state.session_factory = api.make_session_factory(app.state.settings)
+    app.state.opa_path = opa_path
     app.include_router(router)
+    app.include_router(api.router)
     telemetry.setup(app)
     return app
+
+
+def openapi_json(app: FastAPI) -> str:
+    """The app's OpenAPI document, formatted as platform/openapi.json is committed."""
+    return json.dumps(app.openapi(), indent=2, sort_keys=True) + "\n"
