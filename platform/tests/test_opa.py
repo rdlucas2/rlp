@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import runpy
+import sys
 
 import pytest
 
@@ -121,3 +123,11 @@ def test_main_error(fake_download, tmp_path, capsys):
     fake_download(b"tampered", sha256="0" * 64)
     assert opa.main(["opa", str(tmp_path / "opa")]) == 1
     assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_running_the_module_exits_with_mains_code(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["opa"])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(opa.__file__, run_name="__main__")
+    assert exc.value.code == 2
+    assert "usage: python -m rlp_platform.opa DEST" in capsys.readouterr().err
