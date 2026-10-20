@@ -1,6 +1,36 @@
 {
   "components": {
     "schemas": {
+      "ArtifactIn": {
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Component",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "reference": {
+            "description": "An image digest (registry/image@sha256:...), a URI or a path.",
+            "minLength": 1,
+            "title": "Reference",
+            "type": "string"
+          }
+        },
+        "required": [
+          "component",
+          "kind",
+          "reference"
+        ],
+        "title": "ArtifactIn",
+        "type": "object"
+      },
       "ArtifactOut": {
         "properties": {
           "kind": {
@@ -19,8 +49,38 @@
         "title": "ArtifactOut",
         "type": "object"
       },
+      "BuildArtifactOut": {
+        "properties": {
+          "component": {
+            "title": "Component",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "reference",
+          "component"
+        ],
+        "title": "BuildArtifactOut",
+        "type": "object"
+      },
       "BuildOut": {
         "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/BuildArtifactOut"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
           "branch": {
             "title": "Branch",
             "type": "string"
@@ -28,6 +88,14 @@
           "commit": {
             "title": "Commit",
             "type": "string"
+          },
+          "failed_stages": {
+            "description": "The stages whose status is failed, in pipeline order.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Failed Stages",
+            "type": "array"
           },
           "finished_at": {
             "anyOf": [
@@ -51,6 +119,14 @@
           },
           "repo": {
             "title": "Repo",
+            "type": "string"
+          },
+          "run_attempt": {
+            "title": "Run Attempt",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
             "type": "string"
           },
           "stages": {
@@ -80,13 +156,90 @@
           "repo",
           "commit",
           "branch",
+          "run_id",
+          "run_attempt",
           "passed",
+          "failed_stages",
           "stages",
+          "artifacts",
           "workflow_run_url",
           "started_at",
           "finished_at"
         ],
         "title": "BuildOut",
+        "type": "object"
+      },
+      "BuildReport": {
+        "additionalProperties": false,
+        "description": "A pipeline run attempt's gate results. Reporting the same attempt again updates its build.",
+        "properties": {
+          "artifacts": {
+            "description": "What the run published.",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactIn"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "branch": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Branch",
+            "type": "string"
+          },
+          "commit": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Commit",
+            "type": "string"
+          },
+          "repo": {
+            "description": "OWNER/NAME; it need not be indexed yet.",
+            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+            "title": "Repo",
+            "type": "string"
+          },
+          "results": {
+            "description": "The entries of results.json.",
+            "items": {
+              "$ref": "#/components/schemas/StageResultIn"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "run_attempt": {
+            "default": 1,
+            "description": "GITHUB_RUN_ATTEMPT.",
+            "minimum": 1.0,
+            "title": "Run Attempt",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "local",
+            "description": "GITHUB_RUN_ID; local outside CI.",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Url"
+          }
+        },
+        "required": [
+          "repo",
+          "commit",
+          "branch"
+        ],
+        "title": "BuildReport",
         "type": "object"
       },
       "ComponentOut": {
@@ -177,6 +330,93 @@
           "deployed_at"
         ],
         "title": "DeploymentOut",
+        "type": "object"
+      },
+      "DeploymentReport": {
+        "additionalProperties": false,
+        "description": "A component deployed to an environment. Reporting the same one again changes nothing but its status.",
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/ArtifactOut",
+            "description": "What was deployed; the run's build artifact for the component wins."
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run's commit, to find its build.",
+            "title": "Commit"
+          },
+          "component": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Component",
+            "type": "string"
+          },
+          "deployed_at": {
+            "description": "When the deploy ran; with the rest, it identifies the deployment.",
+            "format": "date-time",
+            "title": "Deployed At",
+            "type": "string"
+          },
+          "environment": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Environment",
+            "type": "string"
+          },
+          "repo": {
+            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+            "title": "Repo",
+            "type": "string"
+          },
+          "run_attempt": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Attempt"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "description": "succeeded or failed",
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "component",
+          "environment",
+          "artifact",
+          "status",
+          "deployed_at"
+        ],
+        "title": "DeploymentReport",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -569,6 +809,55 @@
         "title": "RuleResultOut",
         "type": "object"
       },
+      "StageResultIn": {
+        "additionalProperties": true,
+        "description": "One entry of .rlp/pipeline/results.json.",
+        "properties": {
+          "components": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Components",
+            "type": "object"
+          },
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "seconds": {
+            "default": 0.0,
+            "title": "Seconds",
+            "type": "number"
+          },
+          "stage": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "status"
+        ],
+        "title": "StageResultIn",
+        "type": "object"
+      },
       "SyncOut": {
         "properties": {
           "ok": {
@@ -784,6 +1073,130 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/builds": {
+      "post": {
+        "description": "Record a pipeline run attempt's gate results (`rlp pipeline report`). Stage results merge by stage name.",
+        "operationId": "report_build_api_v1_builds_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildOut"
+                }
+              }
+            },
+            "description": "The run attempt was reported before; its build was updated"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Report Build",
+        "tags": [
+          "builds"
+        ]
+      }
+    },
+    "/api/v1/deployments": {
+      "post": {
+        "description": "Record a component deployed to an environment (`rlp pipeline report --deployment`). The repo must be indexed.",
+        "operationId": "report_deployment_api_v1_deployments_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeploymentReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentOut"
+                }
+              }
+            },
+            "description": "The deployment was reported before; only its status can change"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No such record"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Report Deployment",
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
     "/api/v1/hooks/github": {
       "post": {
         "description": "GitHub's push and repository events. A push to the default branch re-indexes the repo at that commit.",

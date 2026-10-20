@@ -63,9 +63,9 @@ def columns(url: str, table: str) -> list[str]:
     return [c[0] for c in schema(url)["tables"][table]["columns"]]
 
 
-def test_downgrade_one_step_and_up_again(migrated_db):
+def test_downgrade_below_0002_and_up_again(migrated_db):
     before = schema(migrated_db)
-    db.downgrade(migrated_db, "-1")
+    db.downgrade(migrated_db, "0001")
     assert schema(migrated_db)["version"] == ["0001"]
     assert "index_error" not in columns(migrated_db, "repos")
     assert "removed_at" not in columns(migrated_db, "components")
@@ -73,6 +73,50 @@ def test_downgrade_one_step_and_up_again(migrated_db):
     assert schema(migrated_db) == before
     assert "index_error" in columns(migrated_db, "repos")
     assert "removed_at" in columns(migrated_db, "components")
+
+
+def test_downgrade_one_step_and_up_again(migrated_db):
+    before = schema(migrated_db)
+    db.downgrade(migrated_db, "-1")
+    assert schema(migrated_db)["version"] == ["0002"]
+    assert {"repo_full_name", "run_id", "run_attempt"}.isdisjoint(columns(migrated_db, "builds"))
+    assert {"build_id", "component_name"}.isdisjoint(columns(migrated_db, "artifacts"))
+    db.upgrade(migrated_db)
+    assert schema(migrated_db) == before
+    assert "uq_builds_repo_commit_run" in schema(migrated_db)["tables"]["builds"]["unique"]
+    assert "uq_deployments_component_env_artifact_at" in schema(migrated_db)["tables"]["deployments"]["unique"]
+
+
+def test_0003_keeps_existing_builds_and_artifacts(empty_db):
+    """Rows written before 0003 get their repo's name, a run of their own and their component's name."""
+    db.upgrade(empty_db, "0002")
+    engine = sa.create_engine(db.engine_url(empty_db))
+    with engine.begin() as connection:
+        run = connection.execute
+        run(sa.text("INSERT INTO projects (id, name, owner, phase) VALUES (1, 'orders', '', 'proposed')"))
+        run(sa.text("INSERT INTO repos (id, full_name, project_id) VALUES (1, 'acme/orders-api', 1)"))
+        run(
+            sa.text(
+                "INSERT INTO components (id, repo_id, name, language, artifact_kind, runtime_kind) "
+                "VALUES (1, 1, 'api', 'python', 'container-image', 'container-service')"
+            )
+        )
+        for build_id in (1, 2):
+            run(
+                sa.text(
+                    "INSERT INTO builds (id, repo_id, commit, branch, stages, passed, started_at) "
+                    "VALUES (:id, 1, 'abc', 'main', '{}', true, now())"
+                ),
+                {"id": build_id},
+            )
+        run(sa.text("INSERT INTO artifacts (id, component_id, kind, reference) VALUES (1, 1, 'zip', 'a.zip')"))
+    db.upgrade(empty_db)
+    with engine.connect() as connection:
+        rows = connection.execute(sa.text("SELECT repo_full_name, run_id, run_attempt FROM builds ORDER BY id")).all()
+        names = connection.execute(sa.text("SELECT component_name FROM artifacts")).scalars().all()
+    engine.dispose()
+    assert [tuple(r) for r in rows] == [("acme/orders-api", "build-1", 1), ("acme/orders-api", "build-2", 1)]
+    assert names == ["api"]
 
 
 def test_phase_is_a_postgres_enum(migrated_db):

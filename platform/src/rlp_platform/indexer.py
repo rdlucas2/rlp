@@ -13,6 +13,8 @@ with schemas/v1alpha1/repo.schema.json).
 - A component that left rlp.yaml is marked removed (`removed_at`), not deleted,
   so its builds and deployments keep their history; one that comes back is
   restored.
+- Builds the pipeline reported for the repo before it was indexed, and their
+  artifacts, are attached to it and its components (see ingest.py).
 
 `sync` re-indexes every repo it can see at its default branch's head. Each
 repo is indexed and committed on its own, so one failure doesn't undo the rest.
@@ -32,6 +34,7 @@ import yaml
 from jsonschema import Draft202012Validator
 from sqlalchemy.orm import Session
 
+from rlp_platform import ingest
 from rlp_platform.github import GitHub, GitHubError
 from rlp_platform.models import Repo
 from rlp_platform.store import NotFound, components, projects, repos
@@ -190,6 +193,8 @@ def apply(
         if cname not in declared and record.removed_at is None:
             components.update(session, record, removed_at=now)
             removed.append(cname)
+    if attached := ingest.attach(session, repo):
+        log.info("builds attached to the repo", extra={"repo": full_name, "builds": attached})
     log.info("repo indexed", extra={"repo": full_name, "commit": commit, "project": name})
     return IndexResult(
         repo=full_name,

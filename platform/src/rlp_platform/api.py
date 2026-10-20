@@ -1,4 +1,4 @@
-"""The platform REST API, /api/v1: the project record, lifecycle moves and the repo indexer.
+"""The platform REST API, /api/v1: the project record, lifecycle moves, the repo indexer and pipeline reports.
 
 Every route but the GitHub webhook needs `Authorization: Bearer <token>`,
 compared in constant time with RLP_API_TOKEN. The webhook,
@@ -19,15 +19,15 @@ import json
 import logging
 from collections.abc import Iterator
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session, sessionmaker
 
-from rlp_platform import indexer, lifecycle
+from rlp_platform import indexer, ingest, lifecycle
 from rlp_platform.config import REPO_NAME, Settings
 from rlp_platform.github import GitHub, GitHubError, signature_ok
 from rlp_platform.models import Build, Component, Deployment, LifecycleTransition, Phase, Project, Repo
@@ -157,21 +157,84 @@ class ComponentOut(BaseModel):
     removed_at: datetime | None = Field(description="When the component left rlp.yaml; null while it is declared.")
 
 
+class ArtifactOut(BaseModel):
+    kind: str
+    reference: str
+
+
+class BuildArtifactOut(ArtifactOut):
+    component: str
+
+
 class BuildOut(BaseModel):
     id: int
     repo: str
     commit: str
     branch: str
+    run_id: str
+    run_attempt: int
     passed: bool
+    failed_stages: list[str] = Field(description="The stages whose status is failed, in pipeline order.")
     stages: dict[str, Any]
+    artifacts: list[BuildArtifactOut]
     workflow_run_url: str | None
     started_at: datetime
     finished_at: datetime | None
 
 
-class ArtifactOut(BaseModel):
-    kind: str
-    reference: str
+StageStatus = Literal["passed", "failed", "skipped"]
+
+
+class StageResultIn(BaseModel):
+    """One entry of .rlp/pipeline/results.json."""
+
+    model_config = ConfigDict(extra="allow")
+
+    stage: str = Field(min_length=1, max_length=100)
+    status: StageStatus
+    detail: str = ""
+    seconds: float = 0.0
+    components: dict[str, str] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    component: str = Field(min_length=1, max_length=200)
+    kind: str = Field(min_length=1, max_length=100)
+    reference: str = Field(min_length=1, description="An image digest (registry/image@sha256:...), a URI or a path.")
+
+
+class BuildReport(BaseModel):
+    """A pipeline run attempt's gate results. Reporting the same attempt again updates its build."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str = Field(pattern=REPO_NAME.pattern, description="OWNER/NAME; it need not be indexed yet.")
+    commit: str = Field(min_length=1, max_length=64)
+    branch: str = Field(min_length=1, max_length=200)
+    run_id: str = Field(default="local", min_length=1, max_length=100, description="GITHUB_RUN_ID; local outside CI.")
+    run_attempt: int = Field(default=1, ge=1, description="GITHUB_RUN_ATTEMPT.")
+    run_url: str | None = None
+    results: list[StageResultIn] = Field(default_factory=list, description="The entries of results.json.")
+    artifacts: list[ArtifactIn] = Field(default_factory=list, description="What the run published.")
+
+
+class DeploymentReport(BaseModel):
+    """A component deployed to an environment. Reporting the same one again changes nothing but its status."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str = Field(pattern=REPO_NAME.pattern)
+    component: str = Field(min_length=1, max_length=200)
+    environment: str = Field(min_length=1, max_length=100)
+    artifact: ArtifactOut = Field(description="What was deployed; the run's build artifact for the component wins.")
+    status: str = Field(min_length=1, max_length=50, description="succeeded or failed")
+    deployed_at: datetime = Field(description="When the deploy ran; with the rest, it identifies the deployment.")
+    commit: str | None = Field(default=None, max_length=64, description="The run's commit, to find its build.")
+    run_id: str | None = Field(default=None, max_length=100)
+    run_attempt: int | None = Field(default=None, ge=1)
 
 
 class DeploymentOut(BaseModel):
@@ -294,11 +357,18 @@ def component_out(c: Component) -> ComponentOut:
 def build_out(session: Session, b: Build) -> BuildOut:
     return BuildOut(
         id=b.id,
-        repo=repos.get(session, b.repo_id).full_name,
+        repo=b.repo_full_name,
         commit=b.commit,
         branch=b.branch,
+        run_id=b.run_id,
+        run_attempt=b.run_attempt,
         passed=b.passed,
+        failed_stages=ingest.failed_stages(b.stages),
         stages=b.stages,
+        artifacts=[
+            BuildArtifactOut(component=a.component_name or "", kind=a.kind, reference=a.reference)
+            for a in reversed(artifacts.list_(session, build_id=b.id))
+        ],
         workflow_run_url=b.workflow_run_url,
         started_at=b.started_at,
         finished_at=b.finished_at,
@@ -515,6 +585,69 @@ def list_repo_deployments(
 ) -> list[DeploymentOut]:
     repo = find_repo(session, owner, name)
     return [deployment_out(session, d) for d in deployments.list_(session, repo_id=repo.id, limit=limit)]
+
+
+# --- pipeline reports ---
+
+
+@router.post(
+    "/builds",
+    tags=["builds"],
+    status_code=status.HTTP_201_CREATED,
+    responses={200: {"model": BuildOut, "description": "The run attempt was reported before; its build was updated"}},
+)
+def report_build(session: SessionDep, response: Response, body: BuildReport) -> BuildOut:
+    """Record a pipeline run attempt's gate results (`rlp pipeline report`). Stage results merge by stage name."""
+    run = ingest.Run(repo=body.repo, commit=body.commit, run_id=body.run_id, run_attempt=body.run_attempt)
+    build, created = ingest.record_build(
+        session,
+        run,
+        branch=body.branch,
+        results=[r.model_dump() for r in body.results],
+        artifact_reports=[ingest.ArtifactReport(a.component, a.kind, a.reference) for a in body.artifacts],
+        workflow_run_url=body.run_url,
+    )
+    session.commit()
+    session.refresh(build)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return build_out(session, build)
+
+
+@router.post(
+    "/deployments",
+    tags=["deployments"],
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        **NOT_FOUND,
+        200: {"model": DeploymentOut, "description": "The deployment was reported before; only its status can change"},
+    },
+)
+def report_deployment(session: SessionDep, response: Response, body: DeploymentReport) -> DeploymentOut:
+    """Record a component deployed to an environment (`rlp pipeline report --deployment`). The repo must be indexed."""
+    run = None
+    if body.commit and body.run_id:
+        run = ingest.Run(repo=body.repo, commit=body.commit, run_id=body.run_id, run_attempt=body.run_attempt or 1)
+    try:
+        deployment, created = ingest.record_deployment(
+            session,
+            repo=body.repo,
+            component=body.component,
+            environment=body.environment,
+            kind=body.artifact.kind,
+            reference=body.artifact.reference,
+            status=body.status,
+            deployed_at=body.deployed_at,
+            run=run,
+        )
+    except NotFound as err:
+        session.rollback()
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"{err}; the indexer has to see it first") from err
+    session.commit()
+    session.refresh(deployment)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return deployment_out(session, deployment)
 
 
 # --- repo indexer ---
