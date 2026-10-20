@@ -1,0 +1,14 @@
+{
+  "action": "renamed",
+  "changes": {"repository": {"name": {"from": "rlp-old"}}},
+  "repository": {
+    "id": 1078000001,
+    "name": "rlp",
+    "full_name": "rdlucas2/rlp",
+    "private": false,
+    "owner": {"login": "rdlucas2", "id": 1000001, "type": "User"},
+    "html_url": "https://github.com/rdlucas2/rlp",
+    "default_branch": "main"
+  },
+  "sender": {"login": "rdlucas2", "id": 1000001, "type": "User"}
+}

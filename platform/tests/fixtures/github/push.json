@@ -1,0 +1,36 @@
+{
+  "ref": "refs/heads/main",
+  "before": "35b965f0a1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6",
+  "after": "8f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6",
+  "created": false,
+  "deleted": false,
+  "forced": false,
+  "compare": "https://github.com/rdlucas2/rlp/compare/35b965f0a1c2...8f1e2d3c4b5a",
+  "commits": [
+    {
+      "id": "8f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6",
+      "message": "feat(platform): index repos from GitHub",
+      "timestamp": "2026-10-20T16:00:00Z",
+      "added": [],
+      "removed": [],
+      "modified": ["rlp.yaml"]
+    }
+  ],
+  "head_commit": {
+    "id": "8f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6",
+    "message": "feat(platform): index repos from GitHub",
+    "timestamp": "2026-10-20T16:00:00Z"
+  },
+  "repository": {
+    "id": 1078000001,
+    "name": "rlp",
+    "full_name": "rdlucas2/rlp",
+    "private": false,
+    "owner": {"login": "rdlucas2", "id": 1000001, "type": "User"},
+    "html_url": "https://github.com/rdlucas2/rlp",
+    "default_branch": "main",
+    "master_branch": "main"
+  },
+  "pusher": {"name": "rdlucas2", "email": "rdlucas2@users.noreply.github.com"},
+  "sender": {"login": "rdlucas2", "id": 1000001, "type": "User"}
+}

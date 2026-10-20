@@ -56,3 +56,37 @@ def test_api_token_disabled():
 def test_api_auth_needs_a_token(env):
     with pytest.raises(ConfigError, match="RLP_API_TOKEN is not set"):
         Settings.from_env(env).check_api_auth()
+
+
+def test_github_defaults():
+    s = Settings.from_env({})
+    assert (s.github_webhook_secret, s.github_token, s.github_repos) == (None, None, ())
+    assert s.github_api_url == "https://api.github.com"
+
+
+def test_github_settings():
+    s = Settings.from_env(
+        {
+            "RLP_GITHUB_WEBHOOK_SECRET": "hook-s3cret",
+            "RLP_GITHUB_TOKEN": "ghs_t0ken",
+            "RLP_GITHUB_REPOS": " rdlucas2/rlp,rdlucas2/rlp-template-python-fastapi\nrdlucas2/rlp ",
+            "RLP_GITHUB_API_URL": "https://github.example.com/api/v3/",
+        }
+    )
+    assert s.github_repos == ("rdlucas2/rlp", "rdlucas2/rlp-template-python-fastapi")
+    assert s.github_api_url == "https://github.example.com/api/v3"
+    assert "hook-s3cret" not in repr(s)
+    assert "ghs_t0ken" not in repr(s)
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"RLP_GITHUB_REPOS": "rdlucas2"}, "RLP_GITHUB_REPOS entries must be OWNER/NAME"),
+        ({"RLP_GITHUB_REPOS": "a/b/c"}, "RLP_GITHUB_REPOS entries must be OWNER/NAME"),
+        ({"RLP_GITHUB_API_URL": "api.github.com"}, "RLP_GITHUB_API_URL must be an http"),
+    ],
+)
+def test_rejects_bad_github_values(env, message):
+    with pytest.raises(ConfigError, match=message):
+        Settings.from_env(env)

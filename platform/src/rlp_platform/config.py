@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
 BOOLEANS = {"true": True, "false": False}
+GITHUB_API_URL = "https://api.github.com"
+REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 class ConfigError(ValueError):
@@ -23,6 +26,11 @@ class Settings:
     migrate_on_start: bool = False
     api_token: str | None = field(default=None, repr=False)
     api_token_disabled: bool = False
+    github_webhook_secret: str | None = field(default=None, repr=False)
+    github_token: str | None = field(default=None, repr=False)
+    # Repos `sync` indexes; empty means every repo the token's installation can see.
+    github_repos: tuple[str, ...] = ()
+    github_api_url: str = GITHUB_API_URL
 
     def check_api_auth(self) -> None:
         """Refuse to serve an open API: RLP_API_TOKEN must be set unless RLP_API_TOKEN_DISABLED=true."""
@@ -54,6 +62,10 @@ class Settings:
         database_url = env.get("DATABASE_URL") or None
         if migrate_on_start and database_url is None:
             raise ConfigError("RLP_MIGRATE_ON_START=true needs DATABASE_URL")
+        github_repos = parse_repos(env.get("RLP_GITHUB_REPOS", ""))
+        github_api_url = (env.get("RLP_GITHUB_API_URL") or GITHUB_API_URL).rstrip("/")
+        if not github_api_url.startswith(("https://", "http://")):
+            raise ConfigError(f"RLP_GITHUB_API_URL must be an http(s) URL, got {github_api_url!r}")
         return cls(
             # Loopback by default; the container image sets HOST so the service is reachable there.
             host=env.get("HOST", "127.0.0.1"),
@@ -63,4 +75,17 @@ class Settings:
             migrate_on_start=migrate_on_start,
             api_token=env.get("RLP_API_TOKEN") or None,
             api_token_disabled=BOOLEANS[raw_disabled],
+            github_webhook_secret=env.get("RLP_GITHUB_WEBHOOK_SECRET") or None,
+            github_token=env.get("RLP_GITHUB_TOKEN") or None,
+            github_repos=github_repos,
+            github_api_url=github_api_url,
         )
+
+
+def parse_repos(raw: str) -> tuple[str, ...]:
+    """RLP_GITHUB_REPOS: OWNER/NAME entries separated by commas or whitespace."""
+    names = [n for n in re.split(r"[\s,]+", raw.strip()) if n]
+    bad = [n for n in names if not REPO_NAME.match(n)]
+    if bad:
+        raise ConfigError(f"RLP_GITHUB_REPOS entries must be OWNER/NAME, got {', '.join(map(repr, bad))}")
+    return tuple(dict.fromkeys(names))
