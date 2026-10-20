@@ -25,7 +25,7 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from functools import cache
-from importlib import resources
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -40,6 +40,8 @@ log = logging.getLogger(__name__)
 
 CONTRACT = "rlp.yaml"
 COPIER_ANSWERS = ".copier-answers.yml"
+# The package's copy of schemas/v1alpha1/repo.schema.json (the image is built from platform/).
+SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "repo.schema.json"
 # Keep a stored error readable: the first few problems are enough to act on.
 MAX_PROBLEMS = 20
 
@@ -70,8 +72,7 @@ class IndexResult:
 
 @cache
 def schema() -> dict[str, Any]:
-    text = resources.files("rlp_platform").joinpath("schemas", "repo.schema.json").read_text(encoding="utf-8")
-    return json.loads(text)
+    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 def _dotted(path: Any) -> str:

@@ -47,7 +47,7 @@ def as_job(contract: str) -> str:
 
 
 def test_shipped_schema_is_the_contract_schema():
-    shipped = json.loads(indexer.resources.files("rlp_platform").joinpath("schemas", "repo.schema.json").read_text())
+    shipped = json.loads(indexer.SCHEMA_PATH.read_text(encoding="utf-8"))
     assert shipped == json.loads((ROOT / "schemas" / "v1alpha1" / "repo.schema.json").read_text()), (
         "platform/src/rlp_platform/schemas/repo.schema.json differs from schemas/v1alpha1/repo.schema.json; "
         "copy the schema over it"
