@@ -1,0 +1,17 @@
+# Opens the build loop's pull requests as the rlp GitHub App (#99): a push to
+# an agent/** branch gets a PR authored by localrlp[bot], so Ryan can approve it.
+# See docs/loops.md#agent-identity.
+name: loop-pr
+
+on:
+  push:
+    branches: ["agent/**"]
+
+permissions: {}
+
+jobs:
+  open-pr:
+    uses: ./.github/workflows/loop-open-pr.yml
+    secrets:
+      app-id: ${{ secrets.APP_ID }}
+      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
