@@ -50,6 +50,10 @@ python -m rlp_platform migrate --check    # also fail if the models and migratio
 
 After changing a model, add a revision and commit it with the change; `migrate --check` and the tests fail until you do. The tests start Postgres 17 with testcontainers, so they need Docker; set `RLP_TEST_DATABASE_URL` to use a server you already run instead (the tests empty its `public` schema).
 
+## Lifecycle
+
+A project moves through `proposed`, `designed`, `scaffolded`, `in-dev`, `live`, `deprecated` and `retired`. [`rlp_platform.lifecycle.transition()`](src/rlp_platform/lifecycle.py) checks each move against the Rego entry rules in [`src/rlp_platform/policy/lifecycle/`](src/rlp_platform/policy/lifecycle/) (a copy of `policy/lifecycle/` at the rlp repo root) with `opa eval`, then sets the phase and records a `lifecycle_transitions` row with the rule results, or writes nothing and returns the failing rules. The image ships the pinned OPA at `/usr/local/bin/opa` ([`src/rlp_platform/opa.py`](src/rlp_platform/opa.py)); the tests use the `opa` on `PATH`, or download the pinned one. The phases, moves and rules are in the rlp repo's [docs/lifecycle.md](https://github.com/rdlucas2/rlp/blob/main/docs/lifecycle.md).
+
 ## Standard verbs
 
 ```sh
