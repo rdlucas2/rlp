@@ -186,6 +186,7 @@ def test_components(api, record):
             "language": "python",
             "artifact_kind": "container-image",
             "runtime_kind": "container-service",
+            "removed_at": None,
         }
     ]
     assert api.get("/api/v1/repos/acme/orders-api/components").json() == expected

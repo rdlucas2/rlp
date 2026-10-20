@@ -1,6 +1,6 @@
 # Platform API and CLI
 
-The platform service (`platform/`) keeps the project record in Postgres and serves it over a versioned REST API under `/api/v1`. The `rlp` CLI's `project`, `repo` and `lifecycle` commands call that API, so anything the UI or a workflow does is scriptable. See #92.
+The platform service (`platform/`) keeps the project record in Postgres and serves it over a versioned REST API under `/api/v1`. The `rlp` CLI's `project`, `repo` and `lifecycle` commands call that API, so anything the UI or a workflow does is scriptable. The repo indexer keeps repos and components in step with GitHub (see [The repo indexer](#the-repo-indexer)). See #92 and #93.
 
 ## Running the service
 
@@ -12,6 +12,10 @@ The service reads its settings from environment variables, declared under `confi
 | `RLP_API_TOKEN` | The bearer token every `/api/v1` request must carry (a `secret: true` entry) |
 | `RLP_API_TOKEN_DISABLED` | `true` serves `/api/v1` without a token. For local development only |
 | `RLP_MIGRATE_ON_START` | `true` applies pending migrations at startup |
+| `RLP_GITHUB_WEBHOOK_SECRET` | The secret GitHub signs webhook deliveries with (a `secret: true` entry). Without it every delivery answers 401 |
+| `RLP_GITHUB_TOKEN` | The token the indexer reads repos with (a `secret: true` entry). Without it only public repos can be read |
+| `RLP_GITHUB_REPOS` | The repos `sync` re-indexes, `OWNER/NAME` separated by commas. Unset: every repo of the token's installation |
+| `RLP_GITHUB_API_URL` | The GitHub REST API; default `https://api.github.com`. Change it for GitHub Enterprise Server |
 
 The service refuses to start without `RLP_API_TOKEN` unless `RLP_API_TOKEN_DISABLED=true`, and logs a warning when the API is open. Generate a token with, for example, `python -c "import secrets; print(secrets.token_urlsafe(32))"`. `rlp run` asks for it once and keeps it in `.rlp/secrets/platform.env`; in AWS it is a Secrets Manager entry an operator fills.
 
@@ -23,7 +27,7 @@ uv run python -m rlp_platform
 
 ## Authentication
 
-rlp is single-user until slice 6, so one token stands in for users and roles. Every `/api/v1` route needs `Authorization: Bearer <token>`; the service compares it with `RLP_API_TOKEN` in constant time and answers 401 with `WWW-Authenticate: Bearer` when it is missing or wrong. With no token configured and the API not disabled, every request answers 401. `/healthz` and `/readyz` stay open.
+rlp is single-user until slice 6, so one token stands in for users and roles. Every `/api/v1` route but the GitHub webhook needs `Authorization: Bearer <token>`; the service compares it with `RLP_API_TOKEN` in constant time and answers 401 with `WWW-Authenticate: Bearer` when it is missing or wrong. With no token configured and the API not disabled, every request answers 401. `/healthz` and `/readyz` stay open. `POST /api/v1/hooks/github` takes no bearer token (GitHub can't send one): it checks each delivery's `X-Hub-Signature-256` instead.
 
 ## Routes
 
@@ -40,18 +44,20 @@ cd platform && uv run python -m rlp_platform openapi > openapi.json
 | `GET /api/v1/projects/{name}` | One project |
 | `PATCH /api/v1/projects/{name}` | Change `owner`, `description` or `dashboard_url`; fields left out keep their value. The phase changes only through transitions |
 | `GET /api/v1/projects/{name}/repos` | The project's repos |
-| `GET /api/v1/projects/{name}/components` | Every component of the project's repos |
+| `GET /api/v1/projects/{name}/components?include_removed=` | Every component of the project's repos; `include_removed=true` adds those that left `rlp.yaml` |
 | `GET /api/v1/projects/{name}/builds?limit=` | The project's builds, newest first (default 100, at most 1000) |
 | `GET /api/v1/projects/{name}/deployments?limit=` | The project's deployments, newest first |
 | `GET /api/v1/projects/{name}/transitions` | The project's phase history, oldest first |
 | `POST /api/v1/projects/{name}/transitions` | Move the project (`to`, `reason`, `actor`); see below |
 | `GET /api/v1/repos?project=` | Repos by full name, optionally one project's |
 | `GET /api/v1/repos/{owner}/{name}` | One repo |
-| `GET /api/v1/repos/{owner}/{name}/components` | The repo's components |
+| `GET /api/v1/repos/{owner}/{name}/components?include_removed=` | The repo's components; `include_removed=true` adds those that left `rlp.yaml` |
 | `GET /api/v1/repos/{owner}/{name}/builds?limit=` | The repo's builds, newest first |
 | `GET /api/v1/repos/{owner}/{name}/deployments?limit=` | The repo's deployments, newest first |
+| `POST /api/v1/hooks/github` | GitHub's `push` and `repository` webhook events, signed; see [The repo indexer](#the-repo-indexer) |
+| `POST /api/v1/sync` | Re-index one repo (`{"repo": "OWNER/NAME"}`) or, with no body, every repo the platform can see |
 
-Repos, components, builds and deployments are read-only here: the repo indexer (#93) and build ingestion (#94) write them. An unknown project or repo answers 404 with `{"detail": "..."}`; a malformed body answers 422.
+Repos, components, builds and deployments are read-only here: the repo indexer and build ingestion (#94) write them. A repo carries `index_error` (why its last index failed, or null) and a component carries `removed_at` (when it left `rlp.yaml`, or null). An unknown project or repo answers 404 with `{"detail": "..."}`; a malformed body answers 422.
 
 ### Moving a project
 
@@ -73,6 +79,55 @@ When a rule fails it changes nothing and answers 409 with the failing rules and 
 ```
 
 A move to an unknown phase fails rule RLP-L101 the same way. If the rules can't be evaluated (no `opa`), it answers 503.
+
+## The repo indexer
+
+Repo contracts live in git; the platform only indexes them. A push to a repo's default branch re-reads its `rlp.yaml` and `.copier-answers.yml` at that commit, and a periodic sync catches anything a webhook missed.
+
+For each repo the indexer:
+
+1. Fetches `rlp.yaml` and `.copier-answers.yml` at the commit through the GitHub REST API, with `RLP_GITHUB_TOKEN`.
+2. Validates `rlp.yaml` against `schemas/v1alpha1/repo.schema.json`, the schema `rlp validate` uses. The platform image is built from `platform/`, so the package ships a copy in `platform/src/rlp_platform/schemas/`; a test fails when the copy differs. After changing the schema, copy it over.
+3. Links the repo to the project named by `metadata.project`. A project that doesn't exist yet is created in `proposed`, with `metadata.description` and the first of `metadata.owners`.
+4. Records the template source and version from `.copier-answers.yml` (`_src_path`, `_commit`), else from `metadata.template`, and the indexed commit.
+5. Upserts the components. A component that left `rlp.yaml` is marked removed (`removed_at`), not deleted, so its builds and deployments keep their history; one that comes back is restored.
+
+An invalid or missing `rlp.yaml` (or an unreadable `.copier-answers.yml`) changes nothing but the repo's `index_error`, which names the commit and the schema problems; `rlp repo show` prints it. The next good index clears it. A repo the platform doesn't know yet is not recorded until its contract is valid. When GitHub can't be read, nothing changes: the webhook answers 502 and `sync` reports the repo as failed.
+
+### The webhook
+
+`POST /api/v1/hooks/github` handles:
+
+| Event | Does |
+| --- | --- |
+| `push` to the default branch | Indexes the repo at the pushed commit (`after`) |
+| `push` to any other branch or a tag, or a branch deletion | Nothing (`"action": "ignored"`) |
+| `repository` `renamed` | Moves the record to the new name, then indexes the default branch head |
+| `repository` `deleted` or `archived` | Nothing: the record is kept; retiring it is the retirement workflow's job |
+| any other `repository` action | Indexes the default branch head |
+| `ping` and every other event | Nothing |
+
+A delivery with no `X-Hub-Signature-256`, or one that isn't the HMAC-SHA256 of the body under `RLP_GITHUB_WEBHOOK_SECRET`, answers 401 and changes nothing. So does every delivery when no secret is configured. The answer is a JSON document with `event`, `action` (`indexed` or `ignored`), `reason` and, when it indexed, `result`.
+
+**Setting it up.** An administrator registers the webhook; rlp doesn't. On the repo (Settings, Webhooks, Add webhook), or on the rlp GitHub App to cover every repo it is installed on:
+
+| Field | Value |
+| --- | --- |
+| Payload URL | `https://<platform host>/api/v1/hooks/github` |
+| Content type | `application/json` |
+| Secret | The value of `RLP_GITHUB_WEBHOOK_SECRET`, for example from `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| Events | "Let me select individual events": **Pushes** and **Repositories** |
+
+GitHub sends a `ping` when the webhook is created; the platform answers it with 200 once the secret matches. The token in `RLP_GITHUB_TOKEN` needs read access to the repos' contents and metadata: an installation token of the rlp GitHub App, or a fine-grained personal access token with "Contents: read".
+
+### Sync
+
+`python -m rlp_platform sync [OWNER/NAME]`, `POST /api/v1/sync` and `rlp repo sync [OWNER/NAME]` re-index repos at their default branch's head: the one named, else the repos in `RLP_GITHUB_REPOS`, else every repo the token's GitHub App installation can see (`GET /installation/repositories`, which needs an installation token). Each repo is indexed and committed on its own, so one failure doesn't undo the rest. The module command prints one JSON line with every repo's result and exits 1 if any repo wasn't indexed.
+
+**Scheduling it.** Run the sync every hour. It isn't a component of its own yet; schedule one of:
+
+- the platform's image with the command `python -m rlp_platform sync` and the service's environment, as a scheduled ECS task or a Kubernetes CronJob (cron `0 * * * *`);
+- `rlp repo sync` from any machine or workflow that has the platform URL and token, for example a GitHub Actions workflow on `schedule: [{cron: "0 * * * *"}]` with `RLP_PLATFORM_URL` and `RLP_PLATFORM_TOKEN` as secrets.
 
 ## CLI
 
@@ -105,7 +160,8 @@ Every command takes `--output json` (`-o json`): stdout is then one JSON documen
 | `rlp project create NAME [--owner O] [--description D] [--dashboard-url U]` | Create a project in `proposed` |
 | `rlp project update NAME [--owner O] [--description D] [--dashboard-url U]` | Change those fields; `--dashboard-url ""` clears it |
 | `rlp repo list [--project NAME]` | List repos |
-| `rlp repo show OWNER/NAME` | A repo and its components |
+| `rlp repo show OWNER/NAME` | A repo, its last index error and its components |
+| `rlp repo sync [OWNER/NAME]` | Re-index one repo, or every repo the platform can see; exits 1 if any wasn't indexed |
 | `rlp lifecycle show PROJECT` | The project's phase and its history |
 | `rlp lifecycle move PROJECT PHASE --reason TEXT` | Move the project; recorded with your login name and the reason |
 

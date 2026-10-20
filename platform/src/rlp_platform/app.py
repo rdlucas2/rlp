@@ -69,8 +69,10 @@ def create_app(settings: Settings | None = None, *, opa_path: str | None = None)
     app.state.settings = settings or Settings.from_env()
     app.state.session_factory = api.make_session_factory(app.state.settings)
     app.state.opa_path = opa_path
+    app.state.github_transport = None  # tests answer GitHub calls from recorded responses
     app.include_router(router)
     app.include_router(api.router)
+    app.include_router(api.hooks)
     telemetry.setup(app)
     return app
 

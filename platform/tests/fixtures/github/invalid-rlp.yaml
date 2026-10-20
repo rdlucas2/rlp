@@ -1,0 +1,12 @@
+# rlp.yaml with a component missing its runtime and an unknown artifact kind.
+apiVersion: rlp/v1alpha1
+kind: Repo
+metadata:
+  name: rlp-platform
+  project: rlp-platform
+components:
+  - name: platform
+    path: .
+    language: python
+    artifact:
+      kind: wheel-of-cheese

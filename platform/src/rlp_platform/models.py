@@ -104,6 +104,8 @@ class Repo(Base):
     template_source: Mapped[str | None] = mapped_column(Text)
     template_version: Mapped[str | None] = mapped_column(String(200))
     last_indexed_commit: Mapped[str | None] = mapped_column(String(64))
+    # Why the last index attempt failed (an invalid or missing rlp.yaml); None once one succeeds.
+    index_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 
@@ -123,6 +125,8 @@ class Component(Base):
     language: Mapped[str] = mapped_column(String(100))
     artifact_kind: Mapped[str] = mapped_column(String(100))
     runtime_kind: Mapped[str] = mapped_column(String(100))
+    # Set when the component left rlp.yaml. It is kept, not deleted, so its builds and deployments keep their history.
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 
