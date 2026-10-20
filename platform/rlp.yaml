@@ -38,6 +38,9 @@ components:
       - name: DATABASE_URL
         description: Connection string for the sample Postgres service; /readyz checks it is reachable when set.
         from: service:db
+      - name: RLP_MIGRATE_ON_START
+        description: Apply pending database migrations at startup (true or false); `python -m rlp_platform migrate` runs them on demand.
+        default: "false"
     services:
       - name: db
         kind: postgres
