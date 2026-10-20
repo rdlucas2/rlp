@@ -51,6 +51,7 @@ def test_unknown_command_is_rejected():
 @pytest.fixture
 def no_server(monkeypatch):
     calls = {}
+    monkeypatch.setenv("RLP_API_TOKEN", "a-key")  # the service won't start without one
     monkeypatch.setattr(entrypoint.uvicorn, "run", lambda app, **kwargs: calls.update(app=app, **kwargs))
     return calls
 

@@ -41,6 +41,12 @@ components:
       - name: RLP_MIGRATE_ON_START
         description: Apply pending database migrations at startup (true or false); `python -m rlp_platform migrate` runs them on demand.
         default: "false"
+      - name: RLP_API_TOKEN
+        description: Bearer token every /api/v1 request must carry; without it the service won't start unless RLP_API_TOKEN_DISABLED=true.
+        secret: true
+      - name: RLP_API_TOKEN_DISABLED
+        description: Serve /api/v1 without a token (true or false). For local development only.
+        default: "false"
     services:
       - name: db
         kind: postgres
