@@ -1,6 +1,6 @@
 # Project lifecycle
 
-Every project in the platform's record has a phase. A project moves through the phases in order, and each move is checked against entry rules written in Rego. A rejected move lists every rule it failed and changes nothing; an allowed move sets the phase and records the transition with the rule results. See #91.
+Every project in the platform's record has a phase. A project moves through the phases in order, and each move is checked against entry rules written in Rego. A rejected move lists every rule it failed and leaves the phase alone, and the history keeps it as rejected; an allowed move sets the phase and records the transition with the rule results. See #91.
 
 ## Phases
 
@@ -54,7 +54,7 @@ Each failure has the bundle's message form, naming the field that failed:
 
 1. It builds an `rlp_transition` document from the project record: the project's name, description, owner and dashboard URL, its current and target phase, and for each linked repo its default branch, its number of builds and its latest default-branch build. The rules read nothing else.
 2. It evaluates `data.rlp.lifecycle` with `opa eval`, passing the document on stdin in conftest's combined form (`[{"path": "rlp-transition.json", "contents": {"rlp_transition": ...}}]`), the same input shape `rlp policy check` gives the rest of the bundle.
-3. If every rule passed, it sets the project's phase and writes one `lifecycle_transitions` row with the actor, the reason and every rule's result. If any rule failed, it writes nothing and returns the results, failing rules included.
+3. If every rule passed, it sets the project's phase and writes one `lifecycle_transitions` row with the actor, the reason and every rule's result. If any rule failed, it leaves the phase alone and returns the results, failing rules included; when the target is a known phase it also writes a `lifecycle_transitions` row with `accepted` false, so the history shows the rejected attempt and why (`GET .../transitions?include_rejected=true`).
 
 Like the store, it flushes but never commits: the caller owns the transaction. The result lists every rule checked, in order:
 

@@ -155,6 +155,34 @@ def test_proposed_straight_to_live_is_rejected_by_the_moves_rule(session, opa_pa
     assert transitions.list_(session, project_id=project.id) == []
 
 
+def test_rejected_move_is_kept_in_the_history_as_rejected(session, opa_path, project, repo):
+    add_build(session, repo, passed=True)
+    projects.update(session, project, phase=Phase.IN_DEV)
+
+    outcome = lifecycle.transition(session, project, Phase.LIVE, "rdlucas2", "ship it", opa_path=opa_path)
+
+    assert outcome.rejected is not None
+    [row] = transitions.list_(session, project_id=project.id, include_rejected=True)
+    assert row.id == outcome.rejected.id
+    assert (row.from_phase, row.to_phase, row.actor, row.reason, row.accepted) == (
+        Phase.IN_DEV,
+        Phase.LIVE,
+        "rdlucas2",
+        "ship it",
+        False,
+    )
+    assert [r["rule"] for r in row.rule_results if not r["passed"]] == ["RLP-L105", "RLP-L106"]
+    assert project.phase is Phase.IN_DEV
+
+
+def test_move_to_an_unknown_phase_is_not_recorded(session, opa_path, project):
+    outcome = lifecycle.transition(session, project, "launched", "rdlucas2", opa_path=opa_path)
+
+    assert not outcome.allowed
+    assert outcome.rejected is None
+    assert transitions.list_(session, project_id=project.id, include_rejected=True) == []
+
+
 def test_allowed_move_sets_phase_and_records_one_transition(session, opa_path, project):
     outcome = lifecycle.transition(session, project, Phase.DESIGNED, "rdlucas2", "spec agreed", opa_path=opa_path)
 

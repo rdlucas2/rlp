@@ -75,9 +75,9 @@ def test_downgrade_below_0002_and_up_again(migrated_db):
     assert "removed_at" in columns(migrated_db, "components")
 
 
-def test_downgrade_one_step_and_up_again(migrated_db):
+def test_downgrade_below_0003_and_up_again(migrated_db):
     before = schema(migrated_db)
-    db.downgrade(migrated_db, "-1")
+    db.downgrade(migrated_db, "0002")
     assert schema(migrated_db)["version"] == ["0002"]
     assert {"repo_full_name", "run_id", "run_attempt"}.isdisjoint(columns(migrated_db, "builds"))
     assert {"build_id", "component_name"}.isdisjoint(columns(migrated_db, "artifacts"))
@@ -85,6 +85,57 @@ def test_downgrade_one_step_and_up_again(migrated_db):
     assert schema(migrated_db) == before
     assert "uq_builds_repo_commit_run" in schema(migrated_db)["tables"]["builds"]["unique"]
     assert "uq_deployments_component_env_artifact_at" in schema(migrated_db)["tables"]["deployments"]["unique"]
+
+
+def test_downgrade_one_step_and_up_again(migrated_db):
+    before = schema(migrated_db)
+    db.downgrade(migrated_db, "-1")
+    assert schema(migrated_db)["version"] == ["0003"]
+    assert "accepted" not in columns(migrated_db, "lifecycle_transitions")
+    db.upgrade(migrated_db)
+    assert schema(migrated_db) == before
+    assert "accepted" in columns(migrated_db, "lifecycle_transitions")
+
+
+ORDERS = "INSERT INTO projects (id, name, owner, phase) VALUES (1, 'orders', '', 'designed')"
+
+
+def test_0004_keeps_existing_transitions_as_accepted(empty_db):
+    db.upgrade(empty_db, "0003")
+    engine = sa.create_engine(db.engine_url(empty_db))
+    with engine.begin() as connection:
+        connection.execute(sa.text(ORDERS))
+        connection.execute(
+            sa.text(
+                "INSERT INTO lifecycle_transitions (project_id, from_phase, to_phase, actor, rule_results) "
+                "VALUES (1, 'proposed', 'designed', 'rdlucas2', '[]')"
+            )
+        )
+    db.upgrade(empty_db)
+    with engine.connect() as connection:
+        accepted = connection.execute(sa.text("SELECT accepted FROM lifecycle_transitions")).scalars().all()
+    engine.dispose()
+    assert accepted == [True]
+
+
+def test_0004_downgrade_drops_rejected_transitions(migrated_db):
+    engine = sa.create_engine(db.engine_url(migrated_db))
+    with engine.begin() as connection:
+        connection.execute(sa.text(ORDERS))
+        for accepted in (True, False):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO lifecycle_transitions "
+                    "(project_id, from_phase, to_phase, actor, rule_results, accepted) "
+                    "VALUES (1, 'proposed', 'designed', 'rdlucas2', '[]', :accepted)"
+                ),
+                {"accepted": accepted},
+            )
+    db.downgrade(migrated_db, "0003")
+    with engine.connect() as connection:
+        count = connection.execute(sa.text("SELECT count(*) FROM lifecycle_transitions")).scalar_one()
+    engine.dispose()
+    assert count == 1
 
 
 def test_0003_keeps_existing_builds_and_artifacts(empty_db):

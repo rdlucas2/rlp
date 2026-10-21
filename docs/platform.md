@@ -47,7 +47,7 @@ cd platform && uv run python -m rlp_platform openapi > openapi.json
 | `GET /api/v1/projects/{name}/components?include_removed=` | Every component of the project's repos; `include_removed=true` adds those that left `rlp.yaml` |
 | `GET /api/v1/projects/{name}/builds?limit=` | The project's builds, newest first (default 100, at most 1000) |
 | `GET /api/v1/projects/{name}/deployments?limit=` | The project's deployments, newest first |
-| `GET /api/v1/projects/{name}/transitions` | The project's phase history, oldest first |
+| `GET /api/v1/projects/{name}/transitions` | The project's phase history, oldest first; `include_rejected=true` adds the moves an entry rule rejected (`accepted: false`) |
 | `POST /api/v1/projects/{name}/transitions` | Move the project (`to`, `reason`, `actor`); see below |
 | `GET /api/v1/repos?project=` | Repos by full name, optionally one project's |
 | `GET /api/v1/repos/{owner}/{name}` | One repo |
@@ -75,10 +75,10 @@ The golden pipeline reports each run to the platform with `rlp pipeline report` 
 `POST /api/v1/projects/{name}/transitions` runs the lifecycle's entry rules ([lifecycle.md](lifecycle.md)). When every rule passes it sets the phase, records the transition and answers 201 with it:
 
 ```json
-{"from_phase": "in-dev", "to_phase": "live", "actor": "ryan", "reason": "launch", "rule_results": [...], "at": "..."}
+{"from_phase": "in-dev", "to_phase": "live", "actor": "ryan", "reason": "launch", "accepted": true, "rule_results": [...], "at": "..."}
 ```
 
-When a rule fails it changes nothing and answers 409 with the failing rules and every rule's result:
+When a rule fails the phase stays as it was. The attempt is kept in the history with `accepted: false` and every rule's result (the inventory UI shows it), and the API answers 409 with the failing rules and every rule's result:
 
 ```json
 {
@@ -89,7 +89,7 @@ When a rule fails it changes nothing and answers 409 with the failing rules and 
 }
 ```
 
-A move to an unknown phase fails rule RLP-L101 the same way. If the rules can't be evaluated (no `opa`), it answers 503.
+A move to an unknown phase fails rule RLP-L101 the same way, but isn't kept in the history. If the rules can't be evaluated (no `opa`), it answers 503.
 
 ## The repo indexer
 
