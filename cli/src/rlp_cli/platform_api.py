@@ -7,6 +7,10 @@ The platform's URL and token come from, in order:
    with `platform.url` and `platform.token`
 
 Each value is looked up on its own, so the environment can override just one.
+RLP_PLATFORM_HOST (`platform.host`) is optional: when set, every request
+carries it as the Host header. A platform behind rlp's shared load balancer,
+which routes by host and has no DNS yet, is reached at the load balancer's DNS
+name with the service's host, the way the deploy stage's smoke check does.
 The file holds a secret, so on POSIX a token is read from it only when the file
 is private to its owner (mode 600); `rlp bootstrap` writes it that way.
 
@@ -30,6 +34,7 @@ import yaml
 API_PREFIX = "/api/v1"
 URL_ENV = "RLP_PLATFORM_URL"
 TOKEN_ENV = "RLP_PLATFORM_TOKEN"
+HOST_ENV = "RLP_PLATFORM_HOST"
 TIMEOUT = 30.0
 
 
@@ -206,6 +211,8 @@ class Config:
     token: str | None = field(repr=False)
     sources: dict[str, str]
     path: Path
+    # Sent as the Host header when set: the service's host behind a host-routed load balancer.
+    host: str | None = None
 
     def require(self) -> tuple[str, str]:
         if not self.url:
@@ -253,7 +260,7 @@ def load_config(environ: Mapping[str, str] | None = None, path: Path | None = No
     from_file = _read_file(path)
     values: dict[str, str | None] = {}
     sources: dict[str, str] = {}
-    for key, env in (("url", URL_ENV), ("token", TOKEN_ENV)):
+    for key, env in (("url", URL_ENV), ("token", TOKEN_ENV), ("host", HOST_ENV)):
         if environ.get(env):
             values[key], sources[key] = environ[env], f"env {env}"
         elif from_file.get(key):
@@ -262,7 +269,7 @@ def load_config(environ: Mapping[str, str] | None = None, path: Path | None = No
             values[key], sources[key] = str(from_file[key]), f"file {path}"
         else:
             values[key], sources[key] = None, "unset"
-    return Config(url=values["url"], token=values["token"], sources=sources, path=path)
+    return Config(url=values["url"], token=values["token"], sources=sources, path=path, host=values["host"])
 
 
 # --- the client ---
@@ -282,11 +289,22 @@ def _repo_path(full_name: str) -> str:
 class PlatformClient:
     """Calls /api/v1 with the bearer token. Pass `transport` to talk to an app in-process (tests)."""
 
-    def __init__(self, url: str, token: str, *, transport: httpx.BaseTransport | None = None, timeout: float = TIMEOUT):
+    def __init__(
+        self,
+        url: str,
+        token: str,
+        *,
+        host: str | None = None,
+        transport: httpx.BaseTransport | None = None,
+        timeout: float = TIMEOUT,
+    ):
         self.url = url.rstrip("/")
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        if host:
+            headers["Host"] = host
         self._http = httpx.Client(
             base_url=self.url + API_PREFIX,
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            headers=headers,
             transport=transport,
             timeout=timeout,
         )
@@ -294,7 +312,7 @@ class PlatformClient:
     @classmethod
     def from_config(cls, config: Config, **kwargs: Any) -> PlatformClient:
         url, token = config.require()
-        return cls(url, token, **kwargs)
+        return cls(url, token, host=config.host, **kwargs)
 
     def close(self) -> None:
         self._http.close()
@@ -309,7 +327,8 @@ class PlatformClient:
         try:
             resp = self._http.request(method, path, **kwargs)
         except httpx.HTTPError as err:
-            raise PlatformError(f"cannot reach the platform at {self.url}: {err}") from err
+            via = f" (Host: {self._http.headers['host']})" if "host" in self._http.headers else ""
+            raise PlatformError(f"cannot reach the platform at {self.url}{via}: {err}") from err
         try:
             body = resp.json()
         except ValueError:

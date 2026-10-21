@@ -198,6 +198,7 @@ def clean_env(monkeypatch, tmp_path):
     """No platform settings from the real environment or home directory."""
     monkeypatch.delenv(platform_api.URL_ENV, raising=False)
     monkeypatch.delenv(platform_api.TOKEN_ENV, raising=False)
+    monkeypatch.delenv(platform_api.HOST_ENV, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     return tmp_path / "xdg" / "rlp" / "config.yaml"
 
@@ -225,7 +226,12 @@ def write_config(path, doc: dict, mode: int = 0o600) -> None:
 def test_config_from_the_environment(configured, clean_env):
     config = platform_api.load_config()
     assert (config.url, config.token, config.path) == (URL, KEY, clean_env)
-    assert config.sources == {"url": f"env {platform_api.URL_ENV}", "token": f"env {platform_api.TOKEN_ENV}"}
+    assert config.sources == {
+        "url": f"env {platform_api.URL_ENV}",
+        "token": f"env {platform_api.TOKEN_ENV}",
+        "host": "unset",
+    }
+    assert config.host is None
     assert KEY not in repr(config)
 
 
@@ -234,7 +240,7 @@ def test_config_from_the_file_with_env_overriding_one_value(clean_env, monkeypat
     monkeypatch.setenv(platform_api.URL_ENV, URL)
     config = platform_api.load_config()
     assert (config.url, config.token) == (URL, KEY)
-    assert config.sources == {"url": f"env {platform_api.URL_ENV}", "token": f"file {clean_env}"}
+    assert config.sources == {"url": f"env {platform_api.URL_ENV}", "token": f"file {clean_env}", "host": "unset"}
 
 
 def test_config_defaults_to_home(monkeypatch, tmp_path):
@@ -265,7 +271,7 @@ def test_config_rejects_a_malformed_file(clean_env, text, message):
 
 def test_config_without_a_platform_section(clean_env):
     write_config(clean_env, {"other": 1})
-    assert platform_api.load_config().sources == {"url": "unset", "token": "unset"}
+    assert platform_api.load_config().sources == {"url": "unset", "token": "unset", "host": "unset"}
 
 
 def test_mask():
@@ -287,7 +293,46 @@ def test_config_show_json(clean_env):
     doc = json.loads(result.output)
     assert doc["ok"] is True
     assert doc["path"] == clean_env.as_posix()
-    assert doc["platform"] == {"url": {"value": None, "source": "unset"}, "token": {"value": None, "source": "unset"}}
+    assert doc["platform"] == {
+        "url": {"value": None, "source": "unset"},
+        "token": {"value": None, "source": "unset"},
+        "host": {"value": None, "source": "unset"},
+    }
+
+
+def test_config_host_from_the_file_or_the_environment(clean_env, monkeypatch):
+    write_config(clean_env, {"platform": {"url": URL, "token": KEY, "host": "platform-rlp.dev.rlp.internal"}})
+    config = platform_api.load_config()
+    assert (config.host, config.sources["host"]) == ("platform-rlp.dev.rlp.internal", f"file {clean_env}")
+    monkeypatch.setenv(platform_api.HOST_ENV, "platform-rlp.prod.rlp.internal")
+    config = platform_api.load_config()
+    assert (config.host, config.sources["host"]) == ("platform-rlp.prod.rlp.internal", f"env {platform_api.HOST_ENV}")
+    result = run(None, "config", "show")
+    assert "platform.host    platform-rlp.prod.rlp.internal  (env RLP_PLATFORM_HOST)" in result.output
+
+
+def test_requests_carry_the_host_header_when_set(configured, fake, monkeypatch):
+    monkeypatch.setenv(platform_api.HOST_ENV, "platform-rlp.dev.rlp.internal")
+    assert run(fake, "project", "list").exit_code == 0
+    assert run(fake, "lifecycle", "show", "orders").exit_code == 0
+    assert {r.headers["host"] for r in fake.requests} == {"platform-rlp.dev.rlp.internal"}
+    assert {r.url.host for r in fake.requests} == {"platform.test"}
+
+
+def test_requests_keep_the_url_host_without_one(configured, fake):
+    assert run(fake, "project", "list").exit_code == 0
+    assert fake.requests[0].headers["host"] == "platform.test"
+
+
+def test_an_unreachable_platform_names_the_host_header(configured, monkeypatch):
+    monkeypatch.setenv(platform_api.HOST_ENV, "platform-rlp.dev.rlp.internal")
+
+    def refuse(request):
+        raise httpx.ConnectError("connection refused")
+
+    result = CliRunner().invoke(cli, ["project", "list"], obj={"platform_transport": httpx.MockTransport(refuse)})
+    assert result.exit_code == 2
+    assert f"cannot reach the platform at {URL} (Host: platform-rlp.dev.rlp.internal)" in result.output
 
 
 @pytest.mark.skipif(os.name != "posix", reason="mode bits are POSIX")
