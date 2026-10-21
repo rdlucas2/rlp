@@ -19,6 +19,11 @@ loop_max_spend_usd: 5
 # sends it when a retirement starts. See docs/lifecycle.md.
 artifact_retention_days: 30
 
+# Days a deprecated project's services may serve no traffic before the nightly
+# retirement sweep flags it for retirement. `rlp lifecycle sweep` sends it; the
+# sweep only flags, a person runs `rlp lifecycle retire`. See docs/lifecycle.md.
+retirement_idle_days: 30
+
 # GitHub logins whose pull requests count as agent-authored for the rlp.agent
 # anti-cheat rules, besides any PR labelled agent:authored. localrlp is the
 # GitHub App loop workflows open PRs as (#51, docs/loops.md#agent-identity).

@@ -403,6 +403,18 @@ class PlatformClient:
                 raise TransitionRejected(cast(Rejection, err.body)) from err
             raise
 
+    def sweep(self, *, idle_days: int | None = None, actor: str = "rlp-cli", dry_run: bool = False) -> dict[str, Any]:
+        """Run the retirement sweep: flag deprecated projects with no traffic in the window. See SweepOut."""
+        body: dict[str, Any] = {"actor": actor, "dry_run": dry_run}
+        if idle_days is not None:
+            body["idle_days"] = idle_days
+        return self._call("POST", "/lifecycle/sweep", json=body)
+
+    def list_sweeps(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """Recorded sweep runs, newest first."""
+        params = {"limit": limit} if limit is not None else None
+        return self._call("GET", "/lifecycle/sweeps", params=params)
+
     def get_retirement(self, project: str) -> Retirement:
         return self._call("GET", f"/projects/{_segment(project)}/retirement")
 

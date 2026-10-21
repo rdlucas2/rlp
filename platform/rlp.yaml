@@ -58,6 +58,11 @@ components:
       - name: RLP_GITHUB_API_URL
         description: GitHub REST API base URL; change it for GitHub Enterprise Server.
         default: https://api.github.com
+      - name: RLP_SWEEP_ROLE_ARN
+        description: Read-only IAM role the retirement sweep assumes to read load balancer traffic; unset, projects are reported unknown.
+      - name: RLP_LOOPS
+        description: The loops kill switch; off (or 0, false, no, disabled) makes the retirement sweep do nothing.
+        default: "on"
     services:
       - name: db
         kind: postgres
