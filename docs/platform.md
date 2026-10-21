@@ -13,7 +13,7 @@ The service reads its settings from environment variables, declared under `confi
 | `RLP_API_TOKEN_DISABLED` | `true` serves `/api/v1` without a token. For local development only |
 | `RLP_MIGRATE_ON_START` | `true` applies pending migrations at startup |
 | `RLP_GITHUB_WEBHOOK_SECRET` | The secret GitHub signs webhook deliveries with (a `secret: true` entry). Without it every delivery answers 401 |
-| `RLP_GITHUB_TOKEN` | The token the indexer reads repos with (a `secret: true` entry). Without it only public repos can be read |
+| `RLP_GITHUB_TOKEN` | The token the indexer reads repos with (a `secret: true` entry). Without it only public repos can be read. The retirement workflow and `expire-artifacts` also use it to dispatch teardowns, archive repos and delete artifacts; see [lifecycle.md](lifecycle.md#what-an-administrator-grants) |
 | `RLP_GITHUB_REPOS` | The repos `sync` re-indexes, `OWNER/NAME` separated by commas. Unset: every repo of the token's installation |
 | `RLP_GITHUB_API_URL` | The GitHub REST API; default `https://api.github.com`. Change it for GitHub Enterprise Server |
 
@@ -55,13 +55,15 @@ cd platform && uv run python -m rlp_platform openapi > openapi.json
 | `GET /api/v1/projects/{name}/deployments?limit=` | The project's deployments, newest first |
 | `GET /api/v1/projects/{name}/transitions` | The project's phase history, oldest first; `include_rejected=true` adds the moves an entry rule rejected (`accepted: false`) |
 | `POST /api/v1/projects/{name}/transitions` | Move the project (`to`, `reason`, `actor`); see below |
+| `GET /api/v1/projects/{name}/retirement` | The project's retirement and each step's status; 404 when none was started |
+| `POST /api/v1/projects/{name}/retirement` | Start or resume the retirement of a `deprecated` project (`actor`, `reason`, `artifact_retention_days`, `workflow`); `dry_run: true` answers the plan. 409 when the project isn't deprecated. See [lifecycle.md](lifecycle.md#retirement) |
 | `GET /api/v1/repos?project=` | Repos by full name, optionally one project's |
 | `GET /api/v1/repos/{owner}/{name}` | One repo |
 | `GET /api/v1/repos/{owner}/{name}/components?include_removed=` | The repo's components; `include_removed=true` adds those that left `rlp.yaml` |
 | `GET /api/v1/repos/{owner}/{name}/builds?limit=` | The repo's builds, newest first |
 | `GET /api/v1/repos/{owner}/{name}/deployments?limit=` | The repo's deployments, newest first |
 | `POST /api/v1/builds` | Record a pipeline run attempt's gate results and artifacts (`rlp pipeline report`); see [Builds and deployments](#builds-and-deployments). 201, or 200 when the attempt was reported before |
-| `POST /api/v1/deployments` | Record a component deployed to an environment (`rlp pipeline report --deployment`). 201, 200 when reported before, 404 when the repo or component isn't indexed |
+| `POST /api/v1/deployments` | Record a component deployed to an environment (`rlp pipeline report --deployment`), or torn down (`--teardown`). 201, 200 when reported before, 404 when the repo or component isn't indexed, 422 for a report with no artifact about a component never deployed there |
 | `POST /api/v1/hooks/github` | GitHub's `push` and `repository` webhook events, signed; see [The repo indexer](#the-repo-indexer) |
 | `POST /api/v1/sync` | Re-index one repo (`{"repo": "OWNER/NAME"}`) or, with no body, every repo the platform can see |
 
@@ -75,6 +77,7 @@ The golden pipeline reports each run to the platform with `rlp pipeline report` 
 - **Artifacts** are what the run published, each with its component, kind and reference (an image digest such as `ghcr.io/acme/x/demo-api@sha256:...`, or a release asset URL). The same artifact reported twice is recorded once.
 - **A build for a repo the indexer hasn't seen yet** is accepted and kept under the reported name. The first time the indexer indexes that repo, it attaches the build and links its artifacts to the components they name.
 - **A deployment** is one component's artifact in one environment at one time: (component, environment, artifact, `deployed_at`) identifies it, and reporting it again only updates its `status`. When the report names its run and that run's build recorded an artifact for the component, the deployment links to it (the digest, not just the tag). The repo and the component must already be indexed; otherwise the report answers 404.
+- **A teardown** is reported the same way, with status `destroyed` or `destroy-failed` and no artifact: it is recorded against the artifact the component last had deployed in that environment, and it settles the retirement step waiting on it ([lifecycle.md](lifecycle.md#retirement)).
 
 ### Moving a project
 
@@ -181,7 +184,8 @@ Every command takes `--output json` (`-o json`): stdout is then one JSON documen
 | `rlp repo sync [OWNER/NAME]` | Re-index one repo, or every repo the platform can see; exits 1 if any wasn't indexed |
 | `rlp lifecycle show PROJECT` | The project's phase and its history |
 | `rlp lifecycle move PROJECT PHASE --reason TEXT` | Move the project; recorded with your login name and the reason |
-| `rlp pipeline report [--deployment]` | Send this run's `results.json` and published artifacts as a build, or the deploy stage's deployments. Exits 0 without reporting when no platform is configured or it can't be reached |
+| `rlp lifecycle retire PROJECT [--yes] [--status] [--reason TEXT] [--workflow FILE]` | Show a deprecated project's retirement plan; `--yes` starts or resumes it, `--status` shows each step. Exits 1 when a step failed. See [lifecycle.md](lifecycle.md#retirement) |
+| `rlp pipeline report [--deployment \| --teardown STATUS]` | Send this run's `results.json` and published artifacts as a build, the deploy stage's deployments, or a teardown's result (`destroyed` or `destroy-failed`) for each component. Exits 0 without reporting when no platform is configured or it can't be reached |
 
 Exit codes follow the rest of the CLI: 0 success; 1 when the platform says no (a rejected move, an unknown project, a name already taken); 2 for setup problems (no URL or token, the platform unreachable, a refused token).
 
