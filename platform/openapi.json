@@ -337,8 +337,15 @@
         "description": "A component deployed to an environment. Reporting the same one again changes nothing but its status.",
         "properties": {
           "artifact": {
-            "$ref": "#/components/schemas/ArtifactOut",
-            "description": "What was deployed; the run's build artifact for the component wins."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What was deployed; the run's build artifact for the component wins. Leave it out to report on the artifact the component last had deployed in the environment, as a teardown does."
           },
           "commit": {
             "anyOf": [
@@ -401,7 +408,7 @@
             "title": "Run Id"
           },
           "status": {
-            "description": "succeeded or failed",
+            "description": "succeeded or failed; a teardown reports destroyed or destroy-failed",
             "maxLength": 50,
             "minLength": 1,
             "title": "Status",
@@ -412,7 +419,6 @@
           "repo",
           "component",
           "environment",
-          "artifact",
           "status",
           "deployed_at"
         ],
@@ -778,6 +784,200 @@
         "title": "RepoOut",
         "type": "object"
       },
+      "RetirementOut": {
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "artifact_retention_days": {
+            "title": "Artifact Retention Days",
+            "type": "integer"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "rejected": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TransitionRejected"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Every step succeeded but an entry rule refused the move to retired."
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "description": "planned (a dry run), pending, waiting, failed or done",
+            "title": "State",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/RetirementStepOut"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project",
+          "state",
+          "actor",
+          "reason",
+          "artifact_retention_days",
+          "started_at",
+          "finished_at",
+          "steps"
+        ],
+        "title": "RetirementOut",
+        "type": "object"
+      },
+      "RetirementRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "default": "api",
+            "description": "Who asked for the retirement.",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "artifact_retention_days": {
+            "default": 30,
+            "description": "Days the project's artifacts are kept (artifact_retention_days in policy/platform/data.yaml); used when the retirement starts.",
+            "minimum": 0.0,
+            "title": "Artifact Retention Days",
+            "type": "integer"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Answer the plan and change nothing.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "workflow": {
+            "default": "pipeline.yml",
+            "description": "The file name of each repo's pipeline workflow, which takes the destroy-env input.",
+            "pattern": "^[A-Za-z0-9_.-]+\\.ya?ml$",
+            "title": "Workflow",
+            "type": "string"
+          }
+        },
+        "title": "RetirementRequest",
+        "type": "object"
+      },
+      "RetirementStepOut": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "kind": {
+            "description": "teardown, archive or expire",
+            "title": "Kind",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "description": "pending, running (waiting for the pipeline to report), succeeded or failed",
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "kind",
+          "repo",
+          "environment",
+          "status",
+          "detail",
+          "started_at",
+          "updated_at"
+        ],
+        "title": "RetirementStepOut",
+        "type": "object"
+      },
       "RuleResultOut": {
         "properties": {
           "description": {
@@ -1138,7 +1338,7 @@
     },
     "/api/v1/deployments": {
       "post": {
-        "description": "Record a component deployed to an environment (`rlp pipeline report --deployment`). The repo must be indexed.",
+        "description": "Record a component deployed to an environment (`rlp pipeline report --deployment`). The repo must be indexed.\n\nA report with no artifact (a teardown's `destroyed`) is about the component's latest deployment in the\nenvironment, and answers 422 when there is none.",
         "operationId": "report_deployment_api_v1_deployments_post",
         "requestBody": {
           "content": {
@@ -1762,6 +1962,150 @@
         "summary": "List Project Repos",
         "tags": [
           "repos"
+        ]
+      }
+    },
+    "/api/v1/projects/{name}/retirement": {
+      "get": {
+        "description": "The project's retirement and each step's status. 404 when none was started.",
+        "operationId": "get_retirement_api_v1_projects__name__retirement_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetirementOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No such record"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Retirement",
+        "tags": [
+          "lifecycle"
+        ]
+      },
+      "post": {
+        "description": "Start the project's retirement, or resume it from its first incomplete step (see docs/lifecycle.md).\n\nTeardowns are dispatched to each repo's pipeline and finish when it reports back, so a retirement usually\ntakes more than one call: call again once they have reported. With dry_run, answer the steps it would run.",
+        "operationId": "retire_project_api_v1_projects__name__retirement_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetirementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetirementOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No such record"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The project isn't deprecated"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The entry rules could not be evaluated"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Retire Project",
+        "tags": [
+          "lifecycle"
         ]
       }
     },

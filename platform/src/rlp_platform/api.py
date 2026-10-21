@@ -27,7 +27,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session, sessionmaker
 
-from rlp_platform import indexer, ingest, lifecycle
+from rlp_platform import indexer, ingest, lifecycle, retirement
 from rlp_platform.config import REPO_NAME, Settings
 from rlp_platform.github import GitHub, GitHubError, signature_ok
 from rlp_platform.models import Build, Component, Deployment, LifecycleTransition, Phase, Project, Repo
@@ -39,6 +39,7 @@ from rlp_platform.store import (
     deployments,
     projects,
     repos,
+    retirements,
     session_factory,
     transitions,
 )
@@ -229,8 +230,16 @@ class DeploymentReport(BaseModel):
     repo: str = Field(pattern=REPO_NAME.pattern)
     component: str = Field(min_length=1, max_length=200)
     environment: str = Field(min_length=1, max_length=100)
-    artifact: ArtifactOut = Field(description="What was deployed; the run's build artifact for the component wins.")
-    status: str = Field(min_length=1, max_length=50, description="succeeded or failed")
+    artifact: ArtifactOut | None = Field(
+        default=None,
+        description="What was deployed; the run's build artifact for the component wins. Leave it out to report on "
+        "the artifact the component last had deployed in the environment, as a teardown does.",
+    )
+    status: str = Field(
+        min_length=1,
+        max_length=50,
+        description="succeeded or failed; a teardown reports destroyed or destroy-failed",
+    )
     deployed_at: datetime = Field(description="When the deploy ran; with the rest, it identifies the deployment.")
     commit: str | None = Field(default=None, max_length=64, description="The run's commit, to find its build.")
     run_id: str | None = Field(default=None, max_length=100)
@@ -272,6 +281,58 @@ class TransitionRequest(BaseModel):
     actor: str = Field(default="api", min_length=1, max_length=200, description="Who asked for the move.")
 
 
+class TransitionRejected(BaseModel):
+    detail: str
+    project: str
+    from_phase: Phase
+    to_phase: str
+    failures: list[RuleResultOut]
+    results: list[RuleResultOut]
+
+
+class RetirementRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str = Field(default="api", min_length=1, max_length=200, description="Who asked for the retirement.")
+    reason: str = ""
+    artifact_retention_days: int = Field(
+        default=retirement.DEFAULT_RETENTION_DAYS,
+        ge=0,
+        description="Days the project's artifacts are kept (artifact_retention_days in policy/platform/data.yaml); "
+        "used when the retirement starts.",
+    )
+    workflow: str = Field(
+        default=retirement.DEFAULT_WORKFLOW,
+        pattern=r"^[A-Za-z0-9_.-]+\.ya?ml$",
+        description="The file name of each repo's pipeline workflow, which takes the destroy-env input.",
+    )
+    dry_run: bool = Field(default=False, description="Answer the plan and change nothing.")
+
+
+class RetirementStepOut(BaseModel):
+    kind: str = Field(description="teardown, archive or expire")
+    repo: str | None
+    environment: str | None
+    status: str = Field(description="pending, running (waiting for the pipeline to report), succeeded or failed")
+    detail: str
+    started_at: datetime | None
+    updated_at: datetime | None
+
+
+class RetirementOut(BaseModel):
+    project: str
+    state: str = Field(description="planned (a dry run), pending, waiting, failed or done")
+    actor: str
+    reason: str
+    artifact_retention_days: int
+    started_at: datetime | None
+    finished_at: datetime | None
+    steps: list[RetirementStepOut]
+    rejected: TransitionRejected | None = Field(
+        default=None, description="Every step succeeded but an entry rule refused the move to retired."
+    )
+
+
 class IndexResultOut(BaseModel):
     repo: str
     commit: str | None
@@ -304,15 +365,6 @@ class SyncRequest(BaseModel):
 class SyncOut(BaseModel):
     ok: bool
     results: list[IndexResultOut]
-
-
-class TransitionRejected(BaseModel):
-    detail: str
-    project: str
-    from_phase: Phase
-    to_phase: str
-    failures: list[RuleResultOut]
-    results: list[RuleResultOut]
 
 
 # --- converters ---
@@ -544,20 +596,138 @@ def move_project(request: Request, session: SessionDep, name: str, body: Transit
     if outcome.transition is None:
         # The phase is unchanged; the history keeps the rejected attempt (when the target was a known phase).
         session.commit()
-        failures = outcome.failures
-        rejected = TransitionRejected(
-            detail=f"{name}: {outcome.from_phase.value} -> {outcome.to_phase} failed "
-            + ", ".join(r.rule for r in failures),
-            project=name,
-            from_phase=outcome.from_phase,
-            to_phase=outcome.to_phase,
-            failures=[rule_out(r) for r in failures],
-            results=[rule_out(r) for r in outcome.results],
-        )
+        rejected = rejection(name, outcome)
         return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=rejected.model_dump(mode="json"))
     session.commit()
     session.refresh(outcome.transition)
     return transition_out(outcome.transition)
+
+
+# --- retirement ---
+
+
+def retirement_out(project: Project, record: Any, rejected: TransitionRejected | None = None) -> RetirementOut:
+    return RetirementOut(
+        project=project.name,
+        state=retirement.state(record),
+        actor=record.actor,
+        reason=record.reason,
+        artifact_retention_days=record.artifact_retention_days,
+        started_at=record.started_at,
+        finished_at=record.finished_at,
+        steps=[
+            RetirementStepOut(
+                kind=s.kind,
+                repo=s.repo_full_name,
+                environment=s.environment,
+                status=s.status,
+                detail=s.detail,
+                started_at=s.started_at,
+                updated_at=s.updated_at,
+            )
+            for s in record.steps
+        ],
+        rejected=rejected,
+    )
+
+
+def rejection(name: str, outcome: lifecycle.Outcome) -> TransitionRejected:
+    failures = outcome.failures
+    move = f"{name}: {outcome.from_phase.value} -> {outcome.to_phase}"
+    return TransitionRejected(
+        detail=f"{move} failed " + ", ".join(r.rule for r in failures),
+        project=name,
+        from_phase=outcome.from_phase,
+        to_phase=outcome.to_phase,
+        failures=[rule_out(r) for r in failures],
+        results=[rule_out(r) for r in outcome.results],
+    )
+
+
+@router.get("/projects/{name}/retirement", tags=["lifecycle"], responses=NOT_FOUND)
+def get_retirement(session: SessionDep, name: str) -> RetirementOut:
+    """The project's retirement and each step's status. 404 when none was started."""
+    project = find_project(session, name)
+    record = retirements.for_project(session, project.id)
+    if record is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"project {name!r} has no retirement")
+    return retirement_out(project, record)
+
+
+@router.post(
+    "/projects/{name}/retirement",
+    tags=["lifecycle"],
+    responses={
+        **NOT_FOUND,
+        409: {"model": Problem, "description": "The project isn't deprecated"},
+        503: {"model": Problem, "description": "The entry rules could not be evaluated"},
+    },
+)
+def retire_project(request: Request, session: SessionDep, name: str, body: RetirementRequest) -> RetirementOut:
+    """Start the project's retirement, or resume it from its first incomplete step (see docs/lifecycle.md).
+
+    Teardowns are dispatched to each repo's pipeline and finish when it reports back, so a retirement usually
+    takes more than one call: call again once they have reported. With dry_run, answer the steps it would run.
+    """
+    project = find_project(session, name)
+    if body.dry_run:
+        record = retirements.for_project(session, project.id)
+        if record is not None:
+            return retirement_out(project, record)
+        if Phase(project.phase) != Phase.DEPRECATED:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=f"project {name!r} is {Phase(project.phase).value}; only a deprecated project can be retired",
+            )
+        return RetirementOut(
+            project=name,
+            state="planned",
+            actor=body.actor,
+            reason=body.reason,
+            artifact_retention_days=body.artifact_retention_days,
+            started_at=None,
+            finished_at=None,
+            steps=[
+                RetirementStepOut(
+                    kind=p.kind,
+                    repo=p.repo,
+                    environment=p.environment,
+                    status="pending",
+                    detail="",
+                    started_at=None,
+                    updated_at=None,
+                )
+                for p in retirement.plan(session, project)
+            ],
+        )
+    try:
+        record = retirement.start(
+            session, project, actor=body.actor, reason=body.reason, retention_days=body.artifact_retention_days
+        )
+        session.commit()
+        with github_client(request) as gh:
+            result = retirement.advance(
+                session,
+                project,
+                gh,
+                actor=body.actor,
+                reason=body.reason,
+                workflow=body.workflow,
+                opa_path=request.app.state.opa_path,
+            )
+    except retirement.RetirementError as err:
+        session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(err)) from err
+    except lifecycle.LifecycleError as err:
+        # The steps done so far are kept; the move to retired is retried on the next call.
+        session.commit()
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
+    session.commit()
+    session.refresh(record)
+    rejected = None
+    if result.outcome is not None and not result.outcome.allowed:
+        rejected = rejection(name, result.outcome)
+    return retirement_out(project, record, rejected)
 
 
 # --- repos ---
@@ -635,7 +805,11 @@ def report_build(session: SessionDep, response: Response, body: BuildReport) -> 
     },
 )
 def report_deployment(session: SessionDep, response: Response, body: DeploymentReport) -> DeploymentOut:
-    """Record a component deployed to an environment (`rlp pipeline report --deployment`). The repo must be indexed."""
+    """Record a component deployed to an environment (`rlp pipeline report --deployment`). The repo must be indexed.
+
+    A report with no artifact (a teardown's `destroyed`) is about the component's latest deployment in the
+    environment, and answers 422 when there is none.
+    """
     run = None
     if body.commit and body.run_id:
         run = ingest.Run(repo=body.repo, commit=body.commit, run_id=body.run_id, run_attempt=body.run_attempt or 1)
@@ -645,8 +819,8 @@ def report_deployment(session: SessionDep, response: Response, body: DeploymentR
             repo=body.repo,
             component=body.component,
             environment=body.environment,
-            kind=body.artifact.kind,
-            reference=body.artifact.reference,
+            kind=body.artifact.kind if body.artifact else None,
+            reference=body.artifact.reference if body.artifact else None,
             status=body.status,
             deployed_at=body.deployed_at,
             run=run,
@@ -654,6 +828,11 @@ def report_deployment(session: SessionDep, response: Response, body: DeploymentR
     except NotFound as err:
         session.rollback()
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"{err}; the indexer has to see it first") from err
+    except ingest.NoArtifact as err:
+        session.rollback()
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(err)) from err
+    # A teardown's report settles the retirement step waiting on it.
+    retirement.on_deployment(session, deployment)
     session.commit()
     session.refresh(deployment)
     if not created:

@@ -1,4 +1,8 @@
-"""The few GitHub REST calls the repo indexer makes, and webhook signature checks.
+"""The few GitHub REST calls the platform makes, and webhook signature checks.
+
+The repo indexer reads repos and files. The retirement workflow dispatches a
+repo's pipeline to tear an environment down, archives repos, and deletes
+container image versions from GHCR.
 
 Requests carry RLP_GITHUB_TOKEN when it is set; without it only public repos
 can be read. Pass `transport` to answer the calls from recorded responses
@@ -40,6 +44,10 @@ def signature_ok(secret: str | None, body: bytes, header: str | None) -> bool:
     return hmac.compare_digest(header.encode(), expected.encode())
 
 
+def _refused(what: str, resp: httpx.Response) -> GitHubError:
+    return GitHubError(f"{what}: GitHub answered {resp.status_code}", resp.status_code)
+
+
 def _repo(full_name: str) -> str:
     owner, _, name = full_name.partition("/")
     return f"/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
@@ -75,6 +83,12 @@ class GitHub:
         except httpx.HTTPError as err:
             raise GitHubError(f"cannot reach GitHub: {err}") from err
         return resp
+
+    def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        try:
+            return self._http.request(method, path, **kwargs)
+        except httpx.HTTPError as err:
+            raise GitHubError(f"cannot reach GitHub: {err}") from err
 
     def _json(self, path: str, **kwargs: Any) -> Any:
         resp = self._get(path, **kwargs)
@@ -119,3 +133,72 @@ class GitHub:
             if len(batch) < PER_PAGE:
                 break
         return names
+
+    def dispatch_workflow(self, full_name: str, workflow: str, ref: str, inputs: dict[str, str]) -> None:
+        """Start a workflow_dispatch run of `workflow` (its file name) on `ref` with `inputs`."""
+        path = f"{_repo(full_name)}/actions/workflows/{quote(workflow, safe='')}/dispatches"
+        resp = self._send("POST", path, json={"ref": ref, "inputs": inputs})
+        if resp.status_code not in (200, 204):
+            raise _refused(f"dispatching {workflow} on {full_name}", resp)
+
+    def archive(self, full_name: str) -> None:
+        """Archive the repo. Archiving an archived repo succeeds too."""
+        resp = self._send("PATCH", _repo(full_name), json={"archived": True})
+        if resp.status_code != 200:
+            raise _refused(f"archiving {full_name}", resp)
+
+    def delete_container_version(self, owner: str, package: str, version: str) -> bool:
+        """Delete the version of GHCR container `package` (OWNER's) whose name or tag is `version`.
+
+        `version` is a digest (sha256:...) or a tag. Returns False when the
+        package or the version is already gone, so deleting twice is safe.
+        Tries OWNER as an organization, then as a user.
+        """
+        name = quote(package, safe="")
+        for scope in (f"/orgs/{quote(owner, safe='')}", f"/users/{quote(owner, safe='')}"):
+            base = f"{scope}/packages/container/{name}/versions"
+            found: int | None = None
+            missing = False
+            for page in range(1, MAX_PAGES + 1):
+                resp = self._get(base, params={"per_page": PER_PAGE, "page": page})
+                if resp.status_code == 404:
+                    missing = True
+                    break
+                if resp.status_code != 200:
+                    raise _refused(f"listing {package} versions", resp)
+                batch = resp.json()
+                for v in batch:
+                    tags = ((v.get("metadata") or {}).get("container") or {}).get("tags") or []
+                    if v.get("name") == version or version in tags:
+                        found = int(v["id"])
+                        break
+                if found is not None or len(batch) < PER_PAGE:
+                    break
+            if missing:
+                continue
+            if found is None:
+                return False
+            resp = self._send("DELETE", f"{base}/{found}")
+            if resp.status_code == 404:
+                return False
+            if resp.status_code != 204:
+                raise _refused(f"deleting {package} {version}", resp)
+            return True
+        return False
+
+    def delete_release_asset(self, full_name: str, tag: str, name: str) -> bool:
+        """Delete the asset `name` of the release tagged `tag`. Returns False when the release or the asset is gone."""
+        resp = self._get(f"{_repo(full_name)}/releases/tags/{quote(tag, safe='')}")
+        if resp.status_code == 404:
+            return False
+        if resp.status_code != 200:
+            raise _refused(f"reading release {tag} of {full_name}", resp)
+        asset = next((a for a in resp.json().get("assets") or [] if a.get("name") == name), None)
+        if asset is None:
+            return False
+        resp = self._send("DELETE", f"{_repo(full_name)}/releases/assets/{int(asset['id'])}")
+        if resp.status_code == 404:
+            return False
+        if resp.status_code != 204:
+            raise _refused(f"deleting {name} from {full_name} {tag}", resp)
+        return True
