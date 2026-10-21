@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from rlp_platform import opa
 from rlp_platform.models import LifecycleTransition, Phase, Project
-from rlp_platform.store import builds, projects, repos, transitions
+from rlp_platform.store import builds, projects, repos, retirements, transitions
 
 PHASES = frozenset(p.value for p in Phase)
 
@@ -100,9 +100,22 @@ def build_input(session: Session, project: Project, to: Phase | str) -> dict[str
         "from": Phase(project.phase).value,
         "to": str(to.value if isinstance(to, Phase) else to),
         "repos": repo_docs,
-        # The retirement workflow (#96) records the teardown; until it does,
-        # nothing has been torn down and RLP-L108 holds every move to retired.
-        "teardown": None,
+        # RLP-L108 holds every move to retired until the retirement workflow has torn everything down.
+        "teardown": teardown(session, project),
+    }
+
+
+def teardown(session: Session, project: Project) -> dict[str, Any] | None:
+    """The retirement's teardown record once every teardown step succeeded, else None."""
+    record = retirements.for_project(session, project.id)
+    if record is None:
+        return None
+    steps = [s for s in record.steps if s.kind == "teardown"]
+    if any(s.status != "succeeded" for s in steps):
+        return None
+    return {
+        "started_at": record.started_at.isoformat(),
+        "environments": [{"repo": s.repo_full_name, "environment": s.environment} for s in steps],
     }
 
 

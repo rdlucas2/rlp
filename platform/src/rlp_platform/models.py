@@ -154,6 +154,8 @@ class Artifact(Base):
     reference: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = _created_at()
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set once `expire-artifacts` deleted it from its registry; the row stays for the history.
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Build(Base):
@@ -219,3 +221,45 @@ class LifecycleTransition(Base):
     # False for a move an entry rule rejected: the phase stayed, and rule_results says why.
     accepted: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Retirement(Base):
+    """A project's retirement: who started it and how long its artifacts are kept. Its steps say how far it got."""
+
+    __tablename__ = "retirements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(_restrict("projects.id"), unique=True)
+    actor: Mapped[str] = mapped_column(String(200))
+    reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    artifact_retention_days: Mapped[int] = mapped_column(Integer)
+    started_at: Mapped[datetime] = _created_at()
+    # Set when the project moved to retired.
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    steps: Mapped[list[RetirementStep]] = relationship(
+        back_populates="retirement", order_by="RetirementStep.position", passive_deletes="all"
+    )
+
+
+class RetirementStep(Base):
+    """One step of a retirement, run in `position` order: a teardown of a repo's environment, a repo archive, or the
+    artifact expiry. `status` is pending, running (a teardown dispatched and not reported yet), succeeded or failed.
+    """
+
+    __tablename__ = "retirement_steps"
+    __table_args__ = (UniqueConstraint("retirement_id", "position", name="uq_retirement_steps_retirement_id_position"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    retirement_id: Mapped[int] = mapped_column(_restrict("retirements.id"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(50))
+    repo_full_name: Mapped[str | None] = mapped_column(String(200))
+    environment: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(50), default="pending", server_default="pending")
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # When the step last started: a teardown's result counts only if it was reported after this.
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = _updated_at()
+
+    retirement: Mapped[Retirement] = relationship(back_populates="steps")

@@ -10,7 +10,16 @@ from __future__ import annotations
 from sqlalchemy.orm import Session, sessionmaker
 
 from rlp_platform.db import make_engine
-from rlp_platform.store import artifacts, builds, components, deployments, projects, repos, transitions
+from rlp_platform.store import (
+    artifacts,
+    builds,
+    components,
+    deployments,
+    projects,
+    repos,
+    retirements,
+    transitions,
+)
 from rlp_platform.store._base import NotFound, UnknownField
 
 
@@ -27,6 +36,7 @@ __all__ = [
     "deployments",
     "projects",
     "repos",
+    "retirements",
     "session_factory",
     "transitions",
 ]

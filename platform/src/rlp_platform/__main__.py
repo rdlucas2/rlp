@@ -5,6 +5,7 @@ python -m rlp_platform migrate             apply pending migrations ($DATABASE_U
 python -m rlp_platform migrate --check     also fail if the models and migrations disagree
 python -m rlp_platform openapi             print the OpenAPI spec (platform/openapi.json)
 python -m rlp_platform sync [OWNER/NAME]   re-index repos from GitHub (RLP_GITHUB_REPOS, else the installation's)
+python -m rlp_platform expire-artifacts    delete artifacts past their expires_at from GHCR and GitHub releases
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import sys
 
 import uvicorn
 
-from rlp_platform import db, indexer, logs
+from rlp_platform import db, indexer, logs, retirement
 from rlp_platform.app import create_app, openapi_json
 from rlp_platform.config import REPO_NAME, ConfigError, Settings
 from rlp_platform.github import GitHub, GitHubError
@@ -86,6 +87,20 @@ def sync(settings: Settings, repo: str | None, transport=None) -> int:
     return 0 if ok else 1
 
 
+def expire_artifacts(settings: Settings, transport=None) -> int:
+    """Delete expired artifacts and mark them expired; print the results as one JSON line. Exit 1 if any failed."""
+    if not settings.database_url:
+        log.error("DATABASE_URL is not set")
+        return 2
+    factory = session_factory(settings.database_url)
+    with GitHub(settings.github_api_url, settings.github_token, transport=transport) as gh, factory() as session:
+        results = retirement.expire_artifacts(session, retirement.GitHubRegistry(gh), commit=session.commit)
+        session.commit()
+    ok = all(r.status != "failed" for r in results)
+    sys.stdout.write(json.dumps({"ok": ok, "results": [r.as_dict() for r in results]}) + "\n")
+    return 0 if ok else 1
+
+
 def openapi() -> int:
     """Print the API's OpenAPI document as platform/openapi.json holds it."""
     sys.stdout.write(openapi_json(create_app(Settings.from_env({}))))
@@ -103,6 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("openapi", help="print the OpenAPI spec; platform/openapi.json is this output")
     sync_parser = commands.add_parser("sync", help="re-index repos from GitHub at their default branch's head")
     sync_parser.add_argument("repo", nargs="?", metavar="OWNER/NAME", help="only this repo")
+    commands.add_parser(
+        "expire-artifacts", help="delete artifacts past their expires_at from their registry; safe to run repeatedly"
+    )
     args = parser.parse_args([] if argv is None else argv)
     if args.command == "openapi":
         return openapi()
@@ -112,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
         return migrate(settings, args.check)
     if args.command == "sync":
         return sync(settings, args.repo)
+    if args.command == "expire-artifacts":
+        return expire_artifacts(settings)
     return serve(settings)
 
 

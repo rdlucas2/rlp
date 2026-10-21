@@ -13,7 +13,9 @@ and attached, with its artifacts, when the indexer first indexes the repo.
 A deployment is one artifact of a component in an environment at a time:
 (component, environment, artifact, deployed at) identifies it. It needs the
 repo and the component to be indexed. Its artifact is the one its run's build
-recorded for the component, when there is one, else the reference it names.
+recorded for the component, when there is one, else the reference it names. A
+report that names no artifact, such as a teardown's `destroyed`, is about the
+artifact the component last had deployed in that environment.
 """
 
 from __future__ import annotations
@@ -29,6 +31,10 @@ from rlp_platform.models import Artifact, Build, Deployment, Repo
 from rlp_platform.store import NotFound, artifacts, builds, components, deployments, repos
 
 FAILED = "failed"
+
+
+class NoArtifact(ValueError):
+    """A deployment report named no artifact, and the component has never been deployed to that environment."""
 
 
 @dataclass(frozen=True)
@@ -156,19 +162,27 @@ def record_deployment(
     repo: str,
     component: str,
     environment: str,
-    kind: str,
-    reference: str,
+    kind: str | None,
+    reference: str | None,
     status: str,
     deployed_at: datetime,
     run: Run | None = None,
 ) -> tuple[Deployment, bool]:
     """Create the deployment, or update the status of the one recorded before.
 
-    NotFound when the repo or the component isn't indexed.
+    NotFound when the repo or the component isn't indexed. With no `kind` and
+    `reference`, the artifact is the component's latest in `environment`;
+    NoArtifact when it has none.
     """
     record = repos.get_by_full_name(session, repo)
     target = components.get_by_name(session, record.id, component)
-    artifact = _artifact_for(session, run, target.id, kind, reference)
+    if kind is None or reference is None:
+        latest = deployments.list_(session, component_id=target.id, environment=environment, limit=1)
+        if not latest:
+            raise NoArtifact(f"{repo} {component} was never deployed to {environment}; the report needs an artifact")
+        artifact = artifacts.get(session, latest[0].artifact_id)
+    else:
+        artifact = _artifact_for(session, run, target.id, kind, reference)
     existing = deployments.find(
         session, component_id=target.id, environment=environment, artifact_id=artifact.id, deployed_at=deployed_at
     )

@@ -7,11 +7,17 @@
 #       types: [submitted, dismissed]   # gate-review re-checks on each review
 #     push:
 #       branches: [main]
+#     workflow_dispatch:                # the platform's retirement workflow tears environments down
+#       inputs:
+#         destroy-env:
+#           type: string
+#           default: ""
 #   jobs:
 #     golden:
 #       uses: rdlucas2/rlp/.github/workflows/golden.yml@<rlp git ref>
 #       with:
 #         rlp-version: "0.2.0"
+#         destroy-env: ${{ inputs.destroy-env || '' }}
 #       secrets:
 #         RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}  # optional: report builds and deployments
 #       permissions:
@@ -37,6 +43,14 @@ on:
         description: >-
           AWS environment to deploy to, for example dev. Plans on pull requests,
           applies on pushes to the default branch. Empty skips the deploy job.
+        type: string
+        default: ""
+      destroy-env:
+        description: >-
+          AWS environment to tear down with `rlp infra destroy` instead of
+          running the pipeline. Only a workflow_dispatch on the default branch
+          destroys; the destroy job reports each component to the platform as
+          destroyed or destroy-failed. `rlp lifecycle retire` dispatches it.
         type: string
         default: ""
       deploy-local:
@@ -98,6 +112,8 @@ on:
 
 jobs:
   gates:
+    # A teardown run (destroy-env) runs only the destroy job.
+    if: inputs.destroy-env == ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -489,3 +505,105 @@ jobs:
             ${{ inputs.working-directory }}/.rlp/infra/*/policy/plan.json
             ${{ inputs.working-directory }}/.rlp/pipeline/reports/infracost.json
           if-no-files-found: warn
+
+  # Tear an environment down (#96). The platform's retirement workflow
+  # dispatches the caller with destroy-env; this job destroys that
+  # environment's stack with the deploy role, as the deploy job applies it, and
+  # reports each component back so the retirement can go on. It runs only from a
+  # workflow_dispatch on the default branch. See docs/lifecycle.md.
+  destroy:
+    if: >-
+      inputs.destroy-env != '' && inputs.deploy-local == false && github.event_name == 'workflow_dispatch' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    # Inherits the caller's grant, which must include id-token: write.
+    concurrency:
+      group: rlp-deploy-${{ github.repository }}-${{ inputs.destroy-env }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RLP_SPEC: ${{ inputs.rlp-version }}
+      RLP_COMPONENTS: ${{ inputs.components }}
+      RLP_DESTROY_ENV: ${{ inputs.destroy-env }}
+      RLP_TF_STATE_BUCKET: ${{ inputs.tf-state-bucket }}
+      AWS_REGION: ${{ inputs.aws-region }}
+      DEPLOY_ROLE: ${{ inputs.aws-deploy-role-arn }}
+      TERRAFORM_VERSION: "1.12.2"  # keep in step with the deploy job
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install rlp
+        run: |
+          case "$RLP_SPEC" in
+            git:*) spec="rlp-cli @ git+https://github.com/rdlucas2/rlp@${RLP_SPEC#git:}" ;;
+            path:*) spec="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}" ;;
+            *) spec="rlp-cli==${RLP_SPEC}" ;;
+          esac
+          python -m pip install --disable-pip-version-check "$spec"
+          rlp --version
+          # The Terraform modules come from the same rlp as the CLI.
+          case "$RLP_SPEC" in
+            git:*) modules="git::https://github.com/rdlucas2/rlp.git//infra/modules?ref=${RLP_SPEC#git:}" ;;
+            path:*) modules="${GITHUB_WORKSPACE}/${RLP_SPEC#path:}/infra/modules" ;;
+            *) modules="" ;;  # rlp uses the modules at its own version tag
+          esac
+          echo "RLP_MODULES_SOURCE=$modules" >> "$GITHUB_ENV"
+          echo "RLP_REGISTRY=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - name: Install Terraform
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}"
+          zip="terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          curl -sSfLO "$base/$zip"
+          curl -sSfLO "$base/terraform_${TERRAFORM_VERSION}_SHA256SUMS"
+          grep " ${zip}\$" "terraform_${TERRAFORM_VERSION}_SHA256SUMS" | sha256sum --check --strict
+          unzip -q -o "$zip" terraform -d "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/terraform" version
+      - name: AWS credentials (GitHub OIDC)
+        run: |
+          if [ -z "$DEPLOY_ROLE" ] || [ -z "$RLP_TF_STATE_BUCKET" ]; then
+            echo "::error::destroy-env is set, so aws-deploy-role-arn and tf-state-bucket are needed (see docs/aws.md)"
+            exit 1
+          fi
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::no GitHub OIDC token: the calling workflow must grant id-token: write"
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/aws-oidc.sh" <<'SCRIPT'
+          curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" |
+            python -c 'import json, sys; print(json.load(sys.stdin)["value"])' > "$RUNNER_TEMP/aws-web-identity-token"
+          SCRIPT
+          {
+            echo "AWS_ROLE_ARN=$DEPLOY_ROLE"
+            echo "AWS_WEB_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/aws-web-identity-token"
+            echo "AWS_ROLE_SESSION_NAME=rlp-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          } >> "$GITHUB_ENV"
+      - name: destroy
+        id: destroy
+        run: |
+          bash "$RUNNER_TEMP/aws-oidc.sh"
+          rlp infra destroy --env "$RLP_DESTROY_ENV" --component "$RLP_COMPONENTS" --auto-approve
+      # Report the result even when an earlier step failed: the retirement waits on it.
+      - name: Report the teardown to the platform
+        if: always() && (inputs.platform-url || vars.RLP_PLATFORM_URL) != ''
+        continue-on-error: true
+        env:
+          RLP_PLATFORM_URL: ${{ inputs.platform-url || vars.RLP_PLATFORM_URL }}
+          RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
+          DESTROY_OUTCOME: ${{ steps.destroy.outcome }}
+        run: |
+          if [ -z "$RLP_PLATFORM_TOKEN" ]; then
+            echo "::notice::RLP_PLATFORM_TOKEN is not set, so the teardown is not reported"
+            exit 0
+          fi
+          if [ "$DESTROY_OUTCOME" = "success" ]; then status=destroyed; else status=destroy-failed; fi
+          if command -v rlp >/dev/null; then
+            rlp pipeline report --teardown "$status" --commit "$GITHUB_SHA" --component "$RLP_COMPONENTS" --deploy-env "$RLP_DESTROY_ENV"
+          fi

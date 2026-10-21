@@ -14,6 +14,11 @@ required_tags:
 # is not given --max-spend. See docs/loops.md.
 loop_max_spend_usd: 5
 
+# Days a retired project's artifacts (images, release assets) are kept before
+# `python -m rlp_platform expire-artifacts` deletes them. `rlp lifecycle retire`
+# sends it when a retirement starts. See docs/lifecycle.md.
+artifact_retention_days: 30
+
 # GitHub logins whose pull requests count as agent-authored for the rlp.agent
 # anti-cheat rules, besides any PR labelled agent:authored. localrlp is the
 # GitHub App loop workflows open PRs as (#51, docs/loops.md#agent-identity).

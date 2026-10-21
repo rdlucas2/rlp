@@ -7,6 +7,12 @@ identified by the repo, the commit, GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT
 
 A deployment is one component of the deploy stage: its environment, the image
 it deployed, whether its readiness check passed, and when the stage ran.
+
+A teardown (`rlp infra destroy`, run by the golden pipeline's destroy-env
+input) is reported the same way, one deployment per component with status
+`destroyed` or `destroy-failed` and no artifact: the platform applies it to
+the artifact the component last had deployed there, and settles the
+retirement step waiting on it.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from rlp_cli import artifacts, contract, infra, pipeline, publish
 
 LOCAL_RUN = "local"
 DEPLOY_STATUS = {"passed": "succeeded", "failed": "failed"}
+TEARDOWN_STATUSES = ("destroyed", "destroy-failed")
 # owner/name at the end of an https, ssh or scp-style remote URL.
 REMOTE = re.compile(r"[:/](?P<owner>[^/:]+)/(?P<name>[^/]+?)(?:\.git)?/?$")
 
@@ -171,3 +178,31 @@ def deployments(
             }
         )
     return bodies
+
+
+def teardowns(
+    root: Path,
+    run: Run,
+    status: str,
+    environ: Mapping[str, str] | None = None,
+    *,
+    deploy_env: str = "",
+    only: tuple[str, ...] = (),
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """The POST /api/v1/deployments bodies for a teardown of the environment: one per component that deploys to AWS."""
+    if status not in TEARDOWN_STATUSES:
+        raise ReportError(f"a teardown is {' or '.join(TEARDOWN_STATUSES)}, got {status!r}")
+    env = os.environ if environ is None else environ
+    environment = deploy_env or env.get("RLP_DEPLOY_ENV", "")
+    if not environment:
+        raise ReportError("no environment: pass --deploy-env")
+    try:
+        chosen, _ = infra.deployable(contract.load_repo(root), only)
+    except (contract.ContractError, infra.InfraError) as err:
+        raise ReportError(str(err)) from err
+    at = (now or datetime.now(UTC)).isoformat(timespec="seconds")
+    return [
+        {**run.key(), "component": c["name"], "environment": environment, "status": status, "deployed_at": at}
+        for c in chosen
+    ]

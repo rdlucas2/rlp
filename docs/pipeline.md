@@ -28,6 +28,7 @@ jobs:
 | --- | --- | --- |
 | `rlp-version` | required | rlp-cli to install: a PyPI version (`0.2.0`), `git:<ref>`, or `path:<dir>` inside the checkout |
 | `deploy-env` | `""` | AWS environment to deploy to (plan on PRs, apply on the default branch); empty skips the `deploy` job. See [aws.md](aws.md) |
+| `destroy-env` | `""` | AWS environment to tear down with `rlp infra destroy` instead of running the pipeline: only the `destroy` job runs, and only from a `workflow_dispatch` on the default branch. The platform's retirement workflow dispatches it; see [Teardown runs](#teardown-runs) |
 | `deploy-local` | `false` | Target LocalStack instead of AWS (for `act`); the AWS stages skip |
 | `aws-region` | `us-east-1` | Region of the environment |
 | `aws-plan-role-arn` | `""` | Read-only role pull requests assume through GitHub OIDC to plan |
@@ -109,6 +110,7 @@ When a platform is configured, each run reports to it, so the project record sho
 | `gates` | Report the build to the platform | `results.json` as this run attempt's build, passed or failed, with every stage's result |
 | `publish` | Report the artifacts to the platform | the published image digests and release asset URLs (from `.rlp/pipeline/published.json`), added to the same build |
 | `deploy` | Report the deployment to the platform | each deployed component: environment, image, `succeeded` or `failed`, and when (default branch only) |
+| `destroy` | Report the teardown to the platform | each component that deploys to AWS: environment, `destroyed` or `destroy-failed` (teardown runs only) |
 
 To turn it on in a repo, set:
 
@@ -128,6 +130,31 @@ jobs:
 Without the URL the report steps are skipped, and the pipeline behaves exactly as before; without the token they print a notice and do nothing. A report never fails the pipeline: the steps run with `continue-on-error`, and `rlp pipeline report` itself exits 0 with a warning when the platform can't be reached. The token is set only on the report steps, never on the steps that run the repo's verbs.
 
 A build is identified by the repo, the commit (a pull request's head commit, not its merge commit), `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT`, so a re-run attempt is a new build and reporting the same attempt twice records one. Locally the run is `local`, attempt 1: `rlp pipeline report --repo OWNER/NAME` with `RLP_PLATFORM_URL` and `RLP_PLATFORM_TOKEN` set sends your last `rlp pipeline run`.
+
+### Teardown runs
+
+The platform's retirement workflow (`rlp lifecycle retire`, [lifecycle.md](lifecycle.md#retirement)) tears a project's environments down through each repo's own pipeline, so the platform never holds AWS credentials. It dispatches the calling workflow (`pipeline.yml` by default) on the default branch with a `destroy-env` input, so the caller must accept one and pass it on:
+
+```yaml
+on:
+  # ...the triggers above, plus:
+  workflow_dispatch:
+    inputs:
+      destroy-env:
+        type: string
+        default: ""
+jobs:
+  golden:
+    uses: rdlucas2/rlp/.github/workflows/golden.yml@<ref>
+    with:
+      rlp-version: "0.2.0"
+      destroy-env: ${{ inputs.destroy-env || '' }}
+      # deploy-env, the AWS roles and tf-state-bucket as for a deploy
+    secrets:
+      RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
+```
+
+With `destroy-env` set, the `gates` job is skipped (and so `gate-review`, `publish` and `deploy`), and the `destroy` job assumes the deploy role through GitHub OIDC, runs `rlp infra destroy --env <destroy-env> --auto-approve`, and reports each component as `destroyed`, or `destroy-failed` when any step before it failed. The report is what lets the retirement go on, so a repo being retired needs reporting turned on (above). The job shares the deploy job's concurrency group, so a teardown never runs alongside a deploy of the same environment.
 
 ## Running it locally
 

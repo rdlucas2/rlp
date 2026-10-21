@@ -16,8 +16,9 @@ import sys
 from pathlib import Path
 
 import click
+import yaml
 
-from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, gate_review, infra, loop, loop_pr, loop_summary, onboard, pipeline, pipeline_report, platform_api, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, gate_review, infra, loop, loop_pr, loop_summary, onboard, pipeline, pipeline_report, platform_api, policy, publish, reports, resources, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -771,16 +772,19 @@ def _unreachable(err: platform_api.PlatformError) -> bool:
 @click.option("--branch", default="", help="Default: GITHUB_HEAD_REF, else GITHUB_REF_NAME, else the checked-out branch.")
 @click.option("--deploy-env", default="", help="Environment, when the deploy stage didn't record one. Default: RLP_DEPLOY_ENV.")
 @click.option("--component", "-c", "components", multiple=True, help="Only these components' deployments (repeatable, or comma-separated).")
+@click.option("--teardown", type=click.Choice(pipeline_report.TEARDOWN_STATUSES), default=None, help="Report a teardown of --deploy-env (rlp infra destroy) instead: each component that deploys to AWS, with this status.")
 @output_option
 @click.pass_context
-def pipeline_report_cmd(ctx: click.Context, root: Path, deployment: bool, repo: str, commit: str, branch: str, deploy_env: str, components: tuple[str, ...]) -> None:
+def pipeline_report_cmd(ctx: click.Context, root: Path, deployment: bool, repo: str, commit: str, branch: str, deploy_env: str, components: tuple[str, ...], teardown: str | None) -> None:
     """Send this run's gate results (or its deployments) to the rlp platform.
 
     The build is .rlp/pipeline/results.json plus what `rlp publish` pushed;
     reporting the same run attempt (GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT) again
     updates the same build. With no platform configured this does nothing and
     exits 0; when the platform can't be reached it warns and exits 0, so a
-    pipeline never fails for want of a report.
+    pipeline never fails for want of a report. --teardown reports a destroy
+    run's result as a deployment of each component (destroyed or
+    destroy-failed), which settles the project's retirement step.
     """
     json_mode = ctx.obj["output"] == "json"
 
@@ -806,7 +810,10 @@ def pipeline_report_cmd(ctx: click.Context, root: Path, deployment: bool, repo: 
         done(f"no platform configured ({platform_api.URL_ENV} and {platform_api.TOKEN_ENV} are unset); nothing reported", reported=False)
     try:
         run = pipeline_report.resolve_run(root, repo=repo, commit=commit, branch=branch)
-        if deployment:
+        if teardown:
+            deployment = True
+            bodies = pipeline_report.teardowns(root, run, teardown, deploy_env=deploy_env, only=split_components(components))
+        elif deployment:
             bodies = pipeline_report.deployments(root, run, deploy_env=deploy_env, only=split_components(components))
         else:
             body = pipeline_report.build(root, run)
@@ -814,7 +821,7 @@ def pipeline_report_cmd(ctx: click.Context, root: Path, deployment: bool, repo: 
     except pipeline_report.ReportError as err:
         fail(ctx, str(err))
     if not bodies:
-        what = "no deploy stage ran" if deployment else f"no {pipeline.RESULTS.as_posix()} and nothing published"
+        what = "nothing deploys to AWS" if teardown else "no deploy stage ran" if deployment else f"no {pipeline.RESULTS.as_posix()} and nothing published"
         done(f"{what}; nothing reported", reported=False)
     try:
         with platform_api.PlatformClient.from_config(config, transport=ctx.obj.get("platform_transport")) as client:
@@ -1400,6 +1407,69 @@ def lifecycle_move(ctx: click.Context, project: str, phase: str, reason: str) ->
         emit_json({"ok": True, "project": project, "transition": moved})
     else:
         click.echo(f"{project}: {moved['from_phase'] or '-'} -> {moved['to_phase']}")
+
+
+def artifact_retention_days() -> int:
+    """Days a retired project's artifacts are kept, from policy/platform/data.yaml."""
+    data = yaml.safe_load((resources.policy_dir() / "platform" / "data.yaml").read_text(encoding="utf-8")) or {}
+    return int(data["artifact_retention_days"])
+
+
+RETIREMENT_NEXT = {
+    "planned": "run it again with --yes to start",
+    "pending": "run it again with --yes to continue",
+    "waiting": "each teardown runs in its repo's pipeline; run this again with --yes once they have reported (see --status)",
+    "failed": "a step failed; fix its cause and run this again with --yes to retry it",
+    "done": "retired",
+}
+
+
+def print_retirement(doc: dict) -> None:
+    started = f", started {doc['started_at']} by {doc['actor']}" if doc.get("started_at") else ""
+    click.echo(f"{doc['project']}: retirement {doc['state']}{started}; artifacts kept {doc['artifact_retention_days']} days")
+    click.echo("")
+    rows = [[str(i + 1), s["kind"], s["repo"] or "-", s["environment"] or "-", s["status"], s["detail"] or "-"] for i, s in enumerate(doc["steps"])]
+    print_table(rows, ["#", "STEP", "REPO", "ENV", "STATUS", "DETAIL"])
+    click.echo("")
+    click.echo(RETIREMENT_NEXT.get(doc["state"], doc["state"]))
+
+
+@lifecycle_group.command(name="retire")
+@click.argument("project")
+@click.option("--yes", is_flag=True, help="Start the retirement, or resume it from its first incomplete step. Without it, only show the plan.")
+@click.option("--status", "show_status", is_flag=True, help="Show each step of the retirement on record, and change nothing.")
+@click.option("--reason", default="", help="Why; recorded with the retirement and the move to retired.")
+@click.option("--workflow", default=None, help="The pipeline workflow file each repo dispatches its teardown with (default: pipeline.yml).")
+@output_option
+@click.pass_context
+def lifecycle_retire(ctx: click.Context, project: str, yes: bool, show_status: bool, reason: str, workflow: str | None) -> None:
+    """Retire a deprecated PROJECT: tear down every environment, archive its repos, expire its artifacts.
+
+    Teardowns run in each repo's pipeline (its destroy-env input) and report
+    back, so a retirement takes more than one run: run it again with --yes
+    once they have. Artifacts are kept artifact_retention_days (policy/platform/data.yaml).
+    Exits 1 when a step failed or the move to retired was rejected.
+    """
+    json_mode = ctx.obj["output"] == "json"
+    if show_status and yes:
+        fail(ctx, "--status shows the retirement and changes nothing; leave out --yes")
+    if show_status:
+        doc = platform_call(ctx, lambda c: c.get_retirement(project))
+    else:
+        days = artifact_retention_days()
+        doc = platform_call(ctx, lambda c: c.retire(project, actor=default_actor(), reason=reason, artifact_retention_days=days, workflow=workflow, dry_run=not yes))
+    ok = doc["state"] != "failed" and not doc.get("rejected")
+    if json_mode:
+        emit_json({"ok": ok, "retirement": doc})
+    else:
+        print_retirement(doc)
+        rejected = doc.get("rejected")
+        if rejected:
+            click.echo(f"{project}: {rejected['from_phase']} -> retired rejected", err=True)
+            for rule in rejected["failures"]:
+                for message in rule["messages"] or [f"[{rule['rule']}] {rule['description']}"]:
+                    click.echo(f"  {message}", err=True)
+    ctx.exit(0 if ok else 1)
 
 
 def main() -> None:

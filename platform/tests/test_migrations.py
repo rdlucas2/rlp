@@ -14,6 +14,8 @@ TABLES = {
     "builds",
     "deployments",
     "lifecycle_transitions",
+    "retirements",
+    "retirement_steps",
 }
 
 
@@ -87,14 +89,26 @@ def test_downgrade_below_0003_and_up_again(migrated_db):
     assert "uq_deployments_component_env_artifact_at" in schema(migrated_db)["tables"]["deployments"]["unique"]
 
 
-def test_downgrade_one_step_and_up_again(migrated_db):
+def test_downgrade_below_0004_and_up_again(migrated_db):
     before = schema(migrated_db)
-    db.downgrade(migrated_db, "-1")
+    db.downgrade(migrated_db, "0003")
     assert schema(migrated_db)["version"] == ["0003"]
     assert "accepted" not in columns(migrated_db, "lifecycle_transitions")
     db.upgrade(migrated_db)
     assert schema(migrated_db) == before
     assert "accepted" in columns(migrated_db, "lifecycle_transitions")
+
+
+def test_downgrade_one_step_and_up_again(migrated_db):
+    before = schema(migrated_db)
+    db.downgrade(migrated_db, "-1")
+    assert schema(migrated_db)["version"] == ["0004"]
+    assert {"retirements", "retirement_steps"}.isdisjoint(schema(migrated_db)["tables"])
+    assert "expired_at" not in columns(migrated_db, "artifacts")
+    db.upgrade(migrated_db)
+    assert schema(migrated_db) == before
+    assert "expired_at" in columns(migrated_db, "artifacts")
+    assert "uq_retirements_project_id" in schema(migrated_db)["tables"]["retirements"]["unique"]
 
 
 ORDERS = "INSERT INTO projects (id, name, owner, phase) VALUES (1, 'orders', '', 'designed')"
