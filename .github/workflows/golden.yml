@@ -95,6 +95,13 @@ on:
           RLP_PLATFORM_URL variable; with neither, nothing is reported.
         type: string
         default: ""
+      platform-host:
+        description: >-
+          Host header for the platform's requests, when it sits behind rlp's
+          host-routed load balancer with no DNS (platform-url is then the load
+          balancer's DNS name). Empty uses the RLP_PLATFORM_HOST variable.
+        type: string
+        default: ""
     secrets:
       RLP_PLATFORM_TOKEN:
         description: The rlp platform's API token, for reporting builds and deployments
@@ -248,6 +255,7 @@ jobs:
         continue-on-error: true
         env:
           RLP_PLATFORM_URL: ${{ inputs.platform-url || vars.RLP_PLATFORM_URL }}
+          RLP_PLATFORM_HOST: ${{ inputs.platform-host || vars.RLP_PLATFORM_HOST }}
           RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
@@ -357,6 +365,7 @@ jobs:
         continue-on-error: true
         env:
           RLP_PLATFORM_URL: ${{ inputs.platform-url || vars.RLP_PLATFORM_URL }}
+          RLP_PLATFORM_HOST: ${{ inputs.platform-host || vars.RLP_PLATFORM_HOST }}
           RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
         run: |
           if [ -z "$RLP_PLATFORM_TOKEN" ]; then
@@ -479,6 +488,7 @@ jobs:
         continue-on-error: true
         env:
           RLP_PLATFORM_URL: ${{ inputs.platform-url || vars.RLP_PLATFORM_URL }}
+          RLP_PLATFORM_HOST: ${{ inputs.platform-host || vars.RLP_PLATFORM_HOST }}
           RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
         run: |
           if [ -z "$RLP_PLATFORM_TOKEN" ]; then
@@ -596,6 +606,7 @@ jobs:
         continue-on-error: true
         env:
           RLP_PLATFORM_URL: ${{ inputs.platform-url || vars.RLP_PLATFORM_URL }}
+          RLP_PLATFORM_HOST: ${{ inputs.platform-host || vars.RLP_PLATFORM_HOST }}
           RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
           DESTROY_OUTCOME: ${{ steps.destroy.outcome }}
         run: |
