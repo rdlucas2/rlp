@@ -1,8 +1,9 @@
 """The pinned OPA binary the lifecycle rules run on.
 
-The platform image installs it at build time (`python -m rlp_platform.opa DEST`
-in the Dockerfile's build stage) and puts it on PATH; at runtime `find()` looks
-it up there. The version and checksums are the ones the rlp CLI pins in
+The platform image builds this version from source with a patched Go toolchain
+(the Dockerfile's opa stage) and puts it on PATH; at runtime `find()` looks it
+up there. `python -m rlp_platform.opa DEST` installs the released binary
+instead, for tests and local runs. The version and checksums are the ones the rlp CLI pins in
 cli/src/rlp_cli/tools.py; tests/policy/test_lifecycle_copy.py at the rlp repo
 root fails when they drift apart.
 """
