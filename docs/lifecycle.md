@@ -112,6 +112,64 @@ The platform's `RLP_GITHUB_TOKEN` (a GitHub App installation token, or a fine-gr
 
 Each repo's pipeline needs what a deploy needs, since the teardown runs as one: the `deploy_role_arn` from the bootstrap (it can destroy what it applied), `tf-state-bucket`, `id-token: write`, and reporting to the platform turned on, without which its teardown never reports and the step stays `running`. The calling workflow must accept the `destroy-env` input ([pipeline.md](pipeline.md#teardown-runs)).
 
+## Retirement sweep
+
+A nightly sweep finds `deprecated` projects whose services served no traffic for `retirement_idle_days` (`policy/platform/data.yaml`, default 30) and flags them for retirement. It only flags: a person decides, and runs `rlp lifecycle retire`. See #97.
+
+```sh
+rlp lifecycle sweep --dry-run    # each deprecated project's result; changes nothing
+rlp lifecycle sweep              # flag the idle ones and open their issues
+```
+
+`python -m rlp_platform sweep [--dry-run] [--idle-days N]` runs the same sweep from the platform image, and `POST /api/v1/lifecycle/sweep` is the API behind the command ([platform.md](platform.md)). The command sends `retirement_idle_days` from the CLI's copy of the platform data, so the window is reviewed like any other gate; the module command defaults to the same 30 days.
+
+### Results
+
+Each `deprecated` project gets one result. Projects in any other phase are not swept.
+
+| Result | When | What the sweep does |
+| --- | --- | --- |
+| `idle` | It has AWS deployments and they served no requests in the window | Records a flag on the project (`retirement_flags`) and opens, or updates, one issue titled "Retire <project>?" in the project's first repo (by name), with the window, the environments, the request count and the `rlp lifecycle retire` command |
+| `active` | Any request in the window | Clears the project's flag, if it had one |
+| `unknown` | No AWS deployment on record (no deployment, or every one reported `destroyed`), no target group tagged for the project, no traffic source configured, or the traffic source failed | Nothing; it is never flagged |
+
+A project that is idle on every sweep keeps exactly one issue: the sweep updates the issue its flag points at, else an open issue with the same title, and opens one only when neither exists. Closing the issue doesn't stop the sweep from flagging the project again while it stays deprecated and idle; move it back to `live` (`rlp lifecycle move PROJECT live`) if it is still needed, which also clears its flag on the next sweep. If the issue can't be opened, the flag is still recorded, the result carries `issue_error`, and the command exits 1.
+
+Each run that isn't a dry run is recorded in `sweep_runs` with every project's result, so it can be inspected later: `GET /api/v1/lifecycle/sweeps`.
+
+### Traffic
+
+Traffic comes from a traffic source (`rlp_platform.sweep.TrafficSource`). The one rlp ships reads CloudWatch: every container-service has its own target group, tagged `rlp:project` and `rlp:environment` ([aws.md](aws.md)), so the sweep finds the project's target groups in the environments it is deployed in (Resource Groups Tagging API), and sums the load balancer's `RequestCount` for each over the window (`AWS/ApplicationELB`, one-day periods). This needs no slice 4 telemetry; slice 4 can add an OTEL-based source behind the same interface.
+
+The platform reads CloudWatch through a read-only role, `RLP_SWEEP_ROLE_ARN`, which it assumes with its own credentials (the ECS task role, in AWS). An administrator creates the role; rlp doesn't. It needs only:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "tag:GetResources",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "cloudwatch:GetMetricData"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+with a trust policy that lets the platform's task role call `sts:AssumeRole` on it, and the task role allowed `sts:AssumeRole` on the sweep role. The region is the platform's (`AWS_REGION`). The platform still holds no deploy credentials: the role can read, nothing more.
+
+To open the issues, the platform's `RLP_GITHUB_TOKEN` needs **Issues: read and write** on each project's repos.
+
+### Schedule and kill switch
+
+The `retirement-sweep` workflow ([`.github/workflows/retirement-sweep.yml`](../.github/workflows/retirement-sweep.yml)) runs `rlp lifecycle sweep` every night at 03:23 UTC, and on demand from the Actions tab (with a dry-run option). It needs the `RLP_PLATFORM_URL` variable (and `RLP_PLATFORM_HOST` when the platform is reached by Host header) and the `RLP_PLATFORM_TOKEN` secret; without the URL it does nothing. It never runs `retire`. To run the sweep from the platform image instead, schedule `python -m rlp_platform sweep` with the service's environment, like `sync`.
+
+The sweep is a loop in the PLAN.md sense, so it obeys the loops kill switch: `RLP_LOOPS=off` skips the workflow (as an Actions variable), stops `rlp lifecycle sweep` before it calls the platform (in the caller's environment), and makes the platform answer `disabled` (in the platform's environment). A disabled sweep reports it is disabled and changes nothing: no flags, no issues, no recorded run.
+
 ## OPA in the platform
 
 The platform image is built from `platform/`, which can't reach `policy/` at the repo root, so the platform package ships its own copy of the rules in `platform/src/rlp_platform/policy/lifecycle/`. The image's build stage downloads OPA with `python -m rlp_platform.opa`, which pins the same version and SHA256 checksums as the rlp CLI (`cli/src/rlp_cli/tools.py`), and installs it at `/usr/local/bin/opa`. `tests/policy/test_lifecycle_copy.py` fails when the copy, the pins or the image drift apart: after changing `policy/lifecycle/lifecycle.rego`, copy it over the platform's file.

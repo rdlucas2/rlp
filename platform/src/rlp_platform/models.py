@@ -263,3 +263,43 @@ class RetirementStep(Base):
     updated_at: Mapped[datetime] = _updated_at()
 
     retirement: Mapped[Retirement] = relationship(back_populates="steps")
+
+
+class SweepRun(Base):
+    """One run of the retirement sweep and what it found for each deprecated project (rlp_platform.sweep).
+
+    A dry run, or a run the kill switch turned off, records nothing.
+    """
+
+    __tablename__ = "sweep_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor: Mapped[str] = mapped_column(String(200))
+    idle_days: Mapped[int] = mapped_column(Integer)
+    # The traffic window: [window_start, window_end).
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # One entry per deprecated project: project, result (idle, active or unknown), requests, detail, issue_url.
+    results: Mapped[list[dict[str, Any]]] = mapped_column(JsonDocument, default=list)
+    started_at: Mapped[datetime] = _created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RetirementFlag(Base):
+    """A deprecated project the sweep found idle, and the "Retire <project>?" issue it opened for it.
+
+    One per project. `cleared_at` is set once the project served traffic again or left deprecated; the issue
+    reference stays, so a later flag updates the same issue instead of opening another.
+    """
+
+    __tablename__ = "retirement_flags"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(_restrict("projects.id"), unique=True)
+    flagged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    issue_repo: Mapped[str | None] = mapped_column(String(200))
+    issue_number: Mapped[int | None] = mapped_column(Integer)
+    issue_url: Mapped[str | None] = mapped_column(Text)
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = _updated_at()

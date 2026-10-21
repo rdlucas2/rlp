@@ -27,7 +27,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session, sessionmaker
 
-from rlp_platform import indexer, ingest, lifecycle, retirement
+from rlp_platform import indexer, ingest, lifecycle, retirement, sweep
 from rlp_platform.config import REPO_NAME, Settings
 from rlp_platform.github import GitHub, GitHubError, signature_ok
 from rlp_platform.models import Build, Component, Deployment, LifecycleTransition, Phase, Project, Repo
@@ -41,6 +41,7 @@ from rlp_platform.store import (
     repos,
     retirements,
     session_factory,
+    sweeps,
     transitions,
 )
 
@@ -331,6 +332,50 @@ class RetirementOut(BaseModel):
     rejected: TransitionRejected | None = Field(
         default=None, description="Every step succeeded but an entry rule refused the move to retired."
     )
+
+
+class SweepRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str = Field(default="api", min_length=1, max_length=200, description="Who ran the sweep.")
+    idle_days: int = Field(
+        default=sweep.DEFAULT_IDLE_DAYS,
+        ge=1,
+        description="Days with no traffic that make a deprecated project idle "
+        "(retirement_idle_days in policy/platform/data.yaml).",
+    )
+    dry_run: bool = Field(default=False, description="Answer each project's result and change nothing.")
+
+
+class SweepResultOut(BaseModel):
+    project: str
+    result: str = Field(description="idle (flagged), active, or unknown (no AWS deployment, or no traffic data)")
+    detail: str
+    environments: list[str]
+    requests: int | None = Field(description="Requests in the window; null when unknown")
+    issue_url: str | None = Field(description='The "Retire <project>?" issue of an idle project')
+    issue_error: str | None = Field(description="Why the issue could not be opened or updated")
+
+
+class SweepOut(BaseModel):
+    disabled: str | None = Field(description="Why the sweep did nothing (RLP_LOOPS=off); null when it ran")
+    dry_run: bool
+    idle_days: int
+    window_start: datetime
+    window_end: datetime
+    run_id: int | None = Field(description="The recorded run; null for a dry run or a disabled sweep")
+    results: list[SweepResultOut]
+
+
+class SweepRunOut(BaseModel):
+    id: int
+    actor: str
+    idle_days: int
+    window_start: datetime
+    window_end: datetime
+    started_at: datetime
+    finished_at: datetime | None
+    results: list[SweepResultOut]
 
 
 class IndexResultOut(BaseModel):
@@ -728,6 +773,63 @@ def retire_project(request: Request, session: SessionDep, name: str, body: Retir
     if result.outcome is not None and not result.outcome.allowed:
         rejected = rejection(name, result.outcome)
     return retirement_out(project, record, rejected)
+
+
+# --- retirement sweep ---
+
+
+@router.post("/lifecycle/sweep", tags=["lifecycle"])
+def run_sweep(request: Request, session: SessionDep, body: SweepRequest) -> SweepOut:
+    """Flag deprecated projects whose services served no traffic in the window (see docs/lifecycle.md).
+
+    An idle project gets a flag and one "Retire <project>?" issue in its first repo; nothing is retired.
+    RLP_LOOPS=off answers `disabled` and changes nothing, as does dry_run.
+    """
+    settings: Settings = request.app.state.settings
+    traffic = getattr(request.app.state, "traffic_source", None)
+    why = ""
+    if traffic is None:
+        traffic, why = sweep.traffic_from_settings(settings)
+    with github_client(request) as gh:
+        result = sweep.run(
+            session,
+            gh,
+            traffic,
+            idle_days=body.idle_days,
+            actor=body.actor,
+            dry_run=body.dry_run,
+            loops_off=settings.loops_off,
+            why_no_traffic=why,
+            commit=session.commit,
+        )
+    session.commit()
+    return SweepOut(
+        disabled=result.disabled,
+        dry_run=result.dry_run,
+        idle_days=result.idle_days,
+        window_start=result.window_start,
+        window_end=result.window_end,
+        run_id=result.run_id,
+        results=[SweepResultOut(**r.as_dict()) for r in result.results],
+    )
+
+
+@router.get("/lifecycle/sweeps", tags=["lifecycle"])
+def list_sweeps(session: SessionDep, limit: Limit = DEFAULT_LIMIT) -> list[SweepRunOut]:
+    """Recorded sweep runs, newest first, with every project's result."""
+    return [
+        SweepRunOut(
+            id=r.id,
+            actor=r.actor,
+            idle_days=r.idle_days,
+            window_start=r.window_start,
+            window_end=r.window_end,
+            started_at=r.started_at,
+            finished_at=r.finished_at,
+            results=[SweepResultOut(**x) for x in r.results],
+        )
+        for r in sweeps.list_runs(session, limit=limit)
+    ]
 
 
 # --- repos ---

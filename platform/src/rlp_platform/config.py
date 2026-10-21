@@ -11,6 +11,8 @@ LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
 BOOLEANS = {"true": True, "false": False}
 GITHUB_API_URL = "https://api.github.com"
 REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+# RLP_LOOPS values that turn every loop off, the retirement sweep included; the rlp CLI reads the same ones.
+LOOPS_OFF_VALUES = ("off", "0", "false", "no", "disabled")
 
 
 class ConfigError(ValueError):
@@ -33,6 +35,10 @@ class Settings:
     github_api_url: str = GITHUB_API_URL
     # The built inventory UI (platform/ui/dist); the image sets it. Unset, / serves nothing.
     ui_dir: str | None = None
+    # The read-only role the retirement sweep assumes to read CloudWatch (docs/lifecycle.md#retirement-sweep).
+    sweep_role_arn: str | None = None
+    # RLP_LOOPS as set, when it turns loops off; None when loops are on.
+    loops_off: str | None = None
 
     def check_api_auth(self) -> None:
         """Refuse to serve an open API: RLP_API_TOKEN must be set unless RLP_API_TOKEN_DISABLED=true."""
@@ -82,7 +88,14 @@ class Settings:
             github_repos=github_repos,
             github_api_url=github_api_url,
             ui_dir=env.get("RLP_UI_DIR") or None,
+            sweep_role_arn=env.get("RLP_SWEEP_ROLE_ARN") or None,
+            loops_off=loops_off(env.get("RLP_LOOPS", "")),
         )
+
+
+def loops_off(raw: str) -> str | None:
+    """RLP_LOOPS as given when it is one of LOOPS_OFF_VALUES (any case), else None."""
+    return raw if raw.strip().lower() in LOOPS_OFF_VALUES else None
 
 
 def parse_repos(raw: str) -> tuple[str, ...]:

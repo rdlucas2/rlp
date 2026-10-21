@@ -1473,5 +1473,59 @@ def lifecycle_retire(ctx: click.Context, project: str, yes: bool, show_status: b
     ctx.exit(0 if ok else 1)
 
 
+def retirement_idle_days() -> int:
+    """Days with no traffic that make a deprecated project idle, from policy/platform/data.yaml."""
+    data = yaml.safe_load((resources.policy_dir() / "platform" / "data.yaml").read_text(encoding="utf-8")) or {}
+    return int(data["retirement_idle_days"])
+
+
+SWEEP_RESULTS = ("idle", "active", "unknown")
+
+
+@lifecycle_group.command(name="sweep")
+@click.option("--dry-run", is_flag=True, help="Report each deprecated project's result and change nothing.")
+@output_option
+@click.pass_context
+def lifecycle_sweep(ctx: click.Context, dry_run: bool) -> None:
+    """Flag deprecated projects whose services served no traffic for retirement_idle_days (policy/platform/data.yaml).
+
+    Each idle project gets a flag and one "Retire <project>?" issue in its
+    first repo; a project with traffic, or with no AWS deployment, is not
+    flagged. It never retires anything: run `rlp lifecycle retire` for that.
+    RLP_LOOPS=off, here or in the platform's environment, turns it off.
+    Exits 1 when an idle project's issue could not be opened or updated.
+    """
+    json_mode = ctx.obj["output"] == "json"
+    switch = os.environ.get(loop.TOGGLE_ENV, "")
+    if switch.strip().lower() in loop.OFF_VALUES:
+        doc = {"disabled": f"{loop.TOGGLE_ENV}={switch} turns every loop off, the retirement sweep included", "results": []}
+    else:
+        days = retirement_idle_days()
+        doc = platform_call(ctx, lambda c: c.sweep(idle_days=days, actor=default_actor(), dry_run=dry_run))
+    ok = all(r.get("issue_error") is None for r in doc["results"])
+    if json_mode:
+        emit_json({"ok": ok, "sweep": doc})
+        ctx.exit(0 if ok else 1)
+    if doc.get("disabled"):
+        click.echo(f"retirement sweep disabled: {doc['disabled']}")
+        return
+    mode = " (dry run: nothing recorded)" if doc.get("dry_run") else ""
+    click.echo(f"retirement sweep: no traffic in {doc['idle_days']} days makes a deprecated project idle{mode}")
+    if not doc["results"]:
+        click.echo("no deprecated projects")
+        return
+    click.echo("")
+    rows = []
+    for r in sorted(doc["results"], key=lambda r: (SWEEP_RESULTS.index(r["result"]) if r["result"] in SWEEP_RESULTS else 9, r["project"])):
+        detail = r["detail"]
+        if r.get("issue_url"):
+            detail += f"; {r['issue_url']}"
+        if r.get("issue_error"):
+            detail += f"; issue not filed: {r['issue_error']}"
+        rows.append([r["project"], r["result"], "-" if r["requests"] is None else str(r["requests"]), detail])
+    print_table(rows, ["PROJECT", "RESULT", "REQUESTS", "DETAIL"])
+    ctx.exit(0 if ok else 1)
+
+
 def main() -> None:
     cli(obj={})
