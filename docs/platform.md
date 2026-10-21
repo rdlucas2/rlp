@@ -166,7 +166,16 @@ The CLI reads the platform URL and token from, in order:
 
 Each value is looked up on its own, so the environment can override just one. The file holds a secret: on Linux and macOS the CLI reads a token from it only when its mode is 600 (`chmod 600 ~/.config/rlp/config.yaml`). `rlp bootstrap` (#98) will write it.
 
-`rlp config show` prints both values and where each came from, with the token masked to its last four characters.
+**A platform on AWS without DNS.** The platform runs as a `container-service` behind the environment's shared load balancer, which routes by host (`platform-rlp.<env>.rlp.internal`, [aws.md](aws.md)). Until it has a real DNS name, point the URL at the load balancer and give the host separately, instead of editing `/etc/hosts`:
+
+```sh
+export RLP_PLATFORM_URL="http://$(aws ssm get-parameter --name /rlp/dev/platform/alb_dns_name --query Parameter.Value --output text)"
+export RLP_PLATFORM_HOST=platform-rlp.dev.rlp.internal   # or platform.host in the config file
+```
+
+`RLP_PLATFORM_HOST` (`platform.host`) is optional; when set, every request carries it as the `Host` header. The listener is plain HTTP, so the token crosses the network unencrypted until the platform has DNS and HTTPS.
+
+`rlp config show` prints the values and where each came from, with the token masked to its last four characters.
 
 ### Commands
 
