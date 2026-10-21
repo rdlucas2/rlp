@@ -298,3 +298,14 @@ def test_golden_destroys_only_from_a_dispatch_on_the_default_branch():
     assert 'status=destroyed; else status=destroy-failed' in report["run"]
     # Same Terraform as the deploy job.
     assert destroy["env"]["TERRAFORM_VERSION"] == jobs["deploy"]["env"]["TERRAFORM_VERSION"]
+
+
+def test_rlps_own_pipeline_accepts_teardowns_and_reports():
+    """rlp is project #1: its caller takes destroy-env from a dispatch and passes the platform token on (#113)."""
+    caller = yaml.safe_load((GOLDEN.parent / "pipeline.yml").read_text(encoding="utf-8"))
+    dispatch = caller[True]["workflow_dispatch"]["inputs"]["destroy-env"]  # PyYAML reads `on:` as True
+    assert (dispatch["type"], dispatch["default"]) == ("string", "")
+    golden = caller["jobs"]["golden"]
+    assert golden["with"]["destroy-env"] == "${{ inputs.destroy-env || '' }}"
+    assert golden["secrets"]["RLP_PLATFORM_TOKEN"] == "${{ secrets.RLP_PLATFORM_TOKEN }}"
+    assert golden["permissions"]["id-token"] == "write"  # the destroy job assumes the deploy role
