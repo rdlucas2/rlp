@@ -901,6 +901,11 @@
       },
       "TransitionOut": {
         "properties": {
+          "accepted": {
+            "description": "False for a move an entry rule rejected; the phase didn't change.",
+            "title": "Accepted",
+            "type": "boolean"
+          },
           "actor": {
             "title": "Actor",
             "type": "string"
@@ -940,6 +945,7 @@
           "to_phase",
           "actor",
           "reason",
+          "accepted",
           "rule_results",
           "at"
         ],
@@ -1772,6 +1778,18 @@
               "title": "Name",
               "type": "string"
             }
+          },
+          {
+            "description": "Also list moves an entry rule rejected, with the rules' results.",
+            "in": "query",
+            "name": "include_rejected",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also list moves an entry rule rejected, with the rules' results.",
+              "title": "Include Rejected",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1873,7 +1891,7 @@
                 }
               }
             },
-            "description": "An entry rule failed; nothing changed"
+            "description": "An entry rule failed; the phase didn't change"
           },
           "422": {
             "content": {

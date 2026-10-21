@@ -9,8 +9,9 @@ here only gathers the input and records the outcome.
 
 `transition()` builds the input from the project record, evaluates the rules
 and, when every rule passes, sets the phase and records one lifecycle
-transition with the rule results. When a rule fails it writes nothing and
-returns the failing rules. Like the store, it flushes but never commits: the
+transition with the rule results. When a rule fails it leaves the phase
+alone, records the attempt as a rejected transition (accepted=False) when the
+target is a known phase, and returns the failing rules. Like the store, it flushes but never commits: the
 caller owns the transaction. See docs/lifecycle.md.
 """
 
@@ -27,6 +28,8 @@ from sqlalchemy.orm import Session
 from rlp_platform import opa
 from rlp_platform.models import LifecycleTransition, Phase, Project
 from rlp_platform.store import builds, projects, repos, transitions
+
+PHASES = frozenset(p.value for p in Phase)
 
 POLICY_DIR = Path(__file__).resolve().parent / "policy" / "lifecycle"
 # The input path the rule messages name, as conftest would for a file.
@@ -59,6 +62,8 @@ class Outcome:
     to_phase: str
     results: list[RuleResult]
     transition: LifecycleTransition | None = None
+    # The recorded attempt when a move to a known phase was rejected.
+    rejected: LifecycleTransition | None = None
 
     @property
     def allowed(self) -> bool:
@@ -159,7 +164,20 @@ def transition(
     results = evaluate(build_input(session, project, to), opa_path=opa_path)
     target = str(to.value if isinstance(to, Phase) else to)
     if not results or any(not r.passed for r in results):
-        return Outcome(project=project.name, from_phase=from_phase, to_phase=target, results=results)
+        rejected = None
+        if target in PHASES:
+            # A move to a real phase is kept in the history as rejected; an unknown phase has no row to go in.
+            rejected = transitions.create(
+                session,
+                project_id=project.id,
+                from_phase=from_phase,
+                to_phase=Phase(target),
+                actor=actor,
+                reason=reason,
+                rule_results=[r.as_dict() for r in results],
+                accepted=False,
+            )
+        return Outcome(project=project.name, from_phase=from_phase, to_phase=target, results=results, rejected=rejected)
     to_phase = Phase(target)
     projects.update(session, project, phase=to_phase)
     record = transitions.create(

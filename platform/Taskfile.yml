@@ -1,40 +1,51 @@
 # Standard rlp verbs. The rlp CLI and the golden pipeline call these by name.
+#
+# The component has two parts: the Python service (src/) and the inventory UI
+# (ui/, Vite + React + TypeScript, Node 20.19 or later). Every verb covers both.
 version: "3"
 
 tasks:
   setup:
-    desc: Install the locked dependencies into .venv
+    desc: Install the locked Python dependencies into .venv and the UI's into ui/node_modules
     cmds:
       - uv sync --locked
+      - npm ci --prefix ui --no-audit --no-fund
 
   lint:
-    desc: Lint and check formatting with ruff
+    desc: Lint and check formatting with ruff; lint and type-check the UI (ESLint, tsc --noEmit)
     cmds:
       - uv run --locked ruff check .
       - uv run --locked ruff format --check .
+      - npm run --prefix ui lint
 
   test:
-    desc: Run the tests; write JUnit XML and Cobertura coverage to reports/
+    desc: Run the Python and UI tests; write JUnit XML and Cobertura coverage for both to reports/
     cmds:
       - >-
         uv run --locked pytest
-        --junitxml=reports/junit.xml
-        --cov --cov-report=xml:reports/coverage.xml --cov-report=term
+        --junitxml=reports/python/junit.xml
+        --cov --cov-report=xml:reports/python/coverage.xml --cov-report=term
+      - npm run --prefix ui test
+      - >-
+        uv run --locked python scripts/merge_reports.py
+        --junit reports/junit.xml reports/python/junit.xml ui/reports/junit.xml
+        --cobertura reports/coverage.xml reports/python/coverage.xml ui/reports/coverage/cobertura-coverage.xml
 
   build:
-    desc: Byte-compile the sources to catch syntax errors
+    desc: Byte-compile the sources to catch syntax errors; build the UI into ui/dist
     cmds:
       - uv run --locked python -m compileall -q src
+      - npm run --prefix ui build
 
   package:
-    desc: Build the container image ($RLP_IMAGE when rlp runs it)
+    desc: Build the container image ($RLP_IMAGE when rlp runs it); it builds and serves the UI too
     cmds:
       - docker build -t "${RLP_IMAGE:-rlp-platform-platform:dev}" .
 
   run:
-    desc: Start the service on $PORT (default 8000)
+    desc: Start the service on $PORT (default 8000), serving the UI from ui/dist once `task build` has built it
     cmds:
-      - uv run --locked python -m rlp_platform
+      - RLP_UI_DIR="${RLP_UI_DIR:-ui/dist}" uv run --locked python -m rlp_platform
 
   smoke:
     desc: Check /healthz and /readyz of a running instance ($SMOKE_URL, default http://127.0.0.1:$PORT)

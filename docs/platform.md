@@ -25,6 +25,12 @@ export DATABASE_URL=postgresql://app:app@127.0.0.1:5432/app RLP_API_TOKEN=... RL
 uv run python -m rlp_platform
 ```
 
+## Inventory UI
+
+The platform serves a React UI (`platform/ui/`) at `/`, built into the image; the API stays under `/api`. The inventory lists every project with its owner, phase, repo count, latest build and last deployment, filterable by phase and searchable by name; the filter is in the URL (`/?phase=in-dev&q=orders`), so a reload or a shared link keeps it. A project's page (`/projects/{name}`) shows its description, owner and dashboard link, its lifecycle history with each move's rule results (rejected moves too), its repos with their components and template versions, the latest build per repo with a link to the run, and the current deployment per environment.
+
+The UI reads only the API, so everything it shows is also available through `rlp`. It asks for `RLP_API_TOKEN` once per browser session and keeps it in `sessionStorage`; a 401 sends it back to the token prompt. See `platform/README.md` for working on it.
+
 ## Authentication
 
 rlp is single-user until slice 6, so one token stands in for users and roles. Every `/api/v1` route but the GitHub webhook needs `Authorization: Bearer <token>`; the service compares it with `RLP_API_TOKEN` in constant time and answers 401 with `WWW-Authenticate: Bearer` when it is missing or wrong. With no token configured and the API not disabled, every request answers 401. `/healthz` and `/readyz` stay open. `POST /api/v1/hooks/github` takes no bearer token (GitHub can't send one): it checks each delivery's `X-Hub-Signature-256` instead.
@@ -47,7 +53,7 @@ cd platform && uv run python -m rlp_platform openapi > openapi.json
 | `GET /api/v1/projects/{name}/components?include_removed=` | Every component of the project's repos; `include_removed=true` adds those that left `rlp.yaml` |
 | `GET /api/v1/projects/{name}/builds?limit=` | The project's builds, newest first (default 100, at most 1000) |
 | `GET /api/v1/projects/{name}/deployments?limit=` | The project's deployments, newest first |
-| `GET /api/v1/projects/{name}/transitions` | The project's phase history, oldest first |
+| `GET /api/v1/projects/{name}/transitions` | The project's phase history, oldest first; `include_rejected=true` adds the moves an entry rule rejected (`accepted: false`) |
 | `POST /api/v1/projects/{name}/transitions` | Move the project (`to`, `reason`, `actor`); see below |
 | `GET /api/v1/repos?project=` | Repos by full name, optionally one project's |
 | `GET /api/v1/repos/{owner}/{name}` | One repo |
@@ -75,10 +81,10 @@ The golden pipeline reports each run to the platform with `rlp pipeline report` 
 `POST /api/v1/projects/{name}/transitions` runs the lifecycle's entry rules ([lifecycle.md](lifecycle.md)). When every rule passes it sets the phase, records the transition and answers 201 with it:
 
 ```json
-{"from_phase": "in-dev", "to_phase": "live", "actor": "ryan", "reason": "launch", "rule_results": [...], "at": "..."}
+{"from_phase": "in-dev", "to_phase": "live", "actor": "ryan", "reason": "launch", "accepted": true, "rule_results": [...], "at": "..."}
 ```
 
-When a rule fails it changes nothing and answers 409 with the failing rules and every rule's result:
+When a rule fails the phase stays as it was. The attempt is kept in the history with `accepted: false` and every rule's result (the inventory UI shows it), and the API answers 409 with the failing rules and every rule's result:
 
 ```json
 {
@@ -89,7 +95,7 @@ When a rule fails it changes nothing and answers 409 with the failing rules and 
 }
 ```
 
-A move to an unknown phase fails rule RLP-L101 the same way. If the rules can't be evaluated (no `opa`), it answers 503.
+A move to an unknown phase fails rule RLP-L101 the same way, but isn't kept in the history. If the rules can't be evaluated (no `opa`), it answers 503.
 
 ## The repo indexer
 

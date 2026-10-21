@@ -45,7 +45,9 @@ def test_platform_pins_opa_where_the_cli_does() -> None:
 
 def test_platform_image_installs_opa_where_lifecycle_runs_it() -> None:
     dockerfile = (PLATFORM / "Dockerfile").read_text(encoding="utf-8")
-    assert "python -m rlp_platform.opa /opt/opa/opa" in dockerfile
-    assert "COPY --from=build /opt/opa/opa /usr/local/bin/opa" in dockerfile
+    # The image builds the pinned version from source (patched Go), so it runs the same OPA as the CLI.
+    assert f"ARG OPA_VERSION={platform_opa().OPA_VERSION}\n" in dockerfile
+    assert 'go install -ldflags="-s -w" "github.com/open-policy-agent/opa@v${OPA_VERSION}"' in dockerfile
+    assert "COPY --from=opa /go/bin/opa /usr/local/bin/opa" in dockerfile
     lifecycle = (PLATFORM / "src" / "rlp_platform" / "lifecycle.py").read_text(encoding="utf-8")
     assert '"/usr/local/bin/opa"' in lifecycle

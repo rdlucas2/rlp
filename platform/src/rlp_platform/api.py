@@ -259,6 +259,7 @@ class TransitionOut(BaseModel):
     to_phase: Phase
     actor: str
     reason: str
+    accepted: bool = Field(description="False for a move an entry rule rejected; the phase didn't change.")
     rule_results: list[RuleResultOut]
     at: datetime
 
@@ -395,6 +396,7 @@ def transition_out(t: LifecycleTransition) -> TransitionOut:
         to_phase=Phase(t.to_phase),
         actor=t.actor,
         reason=t.reason,
+        accepted=t.accepted,
         rule_results=[RuleResultOut(**r) for r in t.rule_results],
         at=t.at,
     )
@@ -504,10 +506,18 @@ def list_project_deployments(session: SessionDep, name: str, limit: Limit = DEFA
 
 
 @router.get("/projects/{name}/transitions", tags=["lifecycle"], responses=NOT_FOUND)
-def list_transitions(session: SessionDep, name: str) -> list[TransitionOut]:
+def list_transitions(
+    session: SessionDep,
+    name: str,
+    include_rejected: Annotated[
+        bool, Query(description="Also list moves an entry rule rejected, with the rules' results.")
+    ] = False,
+) -> list[TransitionOut]:
     """The project's phase history, oldest first."""
     project = find_project(session, name)
-    return [transition_out(t) for t in transitions.list_(session, project_id=project.id)]
+    return [
+        transition_out(t) for t in transitions.list_(session, project_id=project.id, include_rejected=include_rejected)
+    ]
 
 
 @router.post(
@@ -517,7 +527,7 @@ def list_transitions(session: SessionDep, name: str) -> list[TransitionOut]:
     response_model=TransitionOut,
     responses={
         **NOT_FOUND,
-        409: {"model": TransitionRejected, "description": "An entry rule failed; nothing changed"},
+        409: {"model": TransitionRejected, "description": "An entry rule failed; the phase didn't change"},
         503: {"model": Problem, "description": "The entry rules could not be evaluated"},
     },
 )
@@ -532,7 +542,8 @@ def move_project(request: Request, session: SessionDep, name: str, body: Transit
         session.rollback()
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err)) from err
     if outcome.transition is None:
-        session.rollback()
+        # The phase is unchanged; the history keeps the rejected attempt (when the target was a known phase).
+        session.commit()
         failures = outcome.failures
         rejected = TransitionRejected(
             detail=f"{name}: {outcome.from_phase.value} -> {outcome.to_phase} failed "

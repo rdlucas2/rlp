@@ -250,6 +250,27 @@ def test_move_records_the_transition(api, record):
     assert api.get("/api/v1/projects/orders/transitions").json() == [moved]
 
 
+def test_rejected_move_is_listed_with_include_rejected(api, record):
+    api.post("/api/v1/projects/orders/transitions", json={"to": "live", "reason": "launch", "actor": "rdlucas2"})
+    [rejected] = api.get("/api/v1/projects/orders/transitions", params={"include_rejected": True}).json()
+    assert (rejected["from_phase"], rejected["to_phase"], rejected["actor"], rejected["accepted"]) == (
+        "in-dev",
+        "live",
+        "rdlucas2",
+        False,
+    )
+    assert [r["rule"] for r in rejected["rule_results"] if not r["passed"]] == ["RLP-L105", "RLP-L106"]
+
+    api.patch("/api/v1/projects/orders", json={"owner": "rdlucas2", "dashboard_url": "https://d/orders"})
+    moved = api.post("/api/v1/projects/orders/transitions", json={"to": "live"}).json()
+    assert moved["accepted"] is True
+    assert api.get("/api/v1/projects/orders/transitions", params={"include_rejected": True}).json() == [
+        rejected,
+        moved,
+    ]
+    assert api.get("/api/v1/projects/orders/transitions").json() == [moved]
+
+
 def test_move_to_an_unknown_phase_fails_rule_l101(api, record):
     resp = api.post("/api/v1/projects/billing/transitions", json={"to": "launched"})
     assert resp.status_code == 409

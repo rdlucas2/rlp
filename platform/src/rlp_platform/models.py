@@ -14,6 +14,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -23,6 +24,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -202,7 +204,7 @@ class Deployment(Base):
 
 
 class LifecycleTransition(Base):
-    """A project's move from one phase to the next, with who asked, why and what the rules said."""
+    """A project's move from one phase to the next, or a rejected attempt: who asked, why, what the rules said."""
 
     __tablename__ = "lifecycle_transitions"
 
@@ -214,4 +216,6 @@ class LifecycleTransition(Base):
     actor: Mapped[str] = mapped_column(String(200))
     reason: Mapped[str] = mapped_column(Text, default="", server_default="")
     rule_results: Mapped[list[dict[str, Any]]] = mapped_column(JsonDocument, default=list)
+    # False for a move an entry rule rejected: the phase stayed, and rule_results says why.
+    accepted: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

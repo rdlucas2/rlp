@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import re
 import runpy
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -131,3 +133,9 @@ def test_running_the_module_exits_with_mains_code(monkeypatch, capsys):
         runpy.run_path(opa.__file__, run_name="__main__")
     assert exc.value.code == 2
     assert "usage: python -m rlp_platform.opa DEST" in capsys.readouterr().err
+
+
+def test_the_image_builds_the_pinned_opa():
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^ARG OPA_VERSION=(\S+)$", dockerfile, re.M).group(1) == opa.OPA_VERSION
+    assert "COPY --from=opa /go/bin/opa /usr/local/bin/opa" in dockerfile
