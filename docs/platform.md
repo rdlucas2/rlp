@@ -16,6 +16,8 @@ The service reads its settings from environment variables, declared under `confi
 | `RLP_GITHUB_TOKEN` | The token the indexer reads repos with (a `secret: true` entry). Without it only public repos can be read. The retirement workflow and `expire-artifacts` also use it to dispatch teardowns, archive repos and delete artifacts; see [lifecycle.md](lifecycle.md#what-an-administrator-grants) |
 | `RLP_GITHUB_REPOS` | The repos `sync` re-indexes, `OWNER/NAME` separated by commas. Unset: every repo of the token's installation |
 | `RLP_GITHUB_API_URL` | The GitHub REST API; default `https://api.github.com`. Change it for GitHub Enterprise Server |
+| `RLP_SWEEP_ROLE_ARN` | The read-only IAM role the retirement sweep assumes to read load balancer traffic. Unset, the sweep reports every deprecated project `unknown`; see [lifecycle.md](lifecycle.md#retirement-sweep) |
+| `RLP_LOOPS` | The loops kill switch; `off` (or `0`, `false`, `no`, `disabled`) makes the retirement sweep report it is disabled and change nothing |
 
 The service refuses to start without `RLP_API_TOKEN` unless `RLP_API_TOKEN_DISABLED=true`, and logs a warning when the API is open. Generate a token with, for example, `python -c "import secrets; print(secrets.token_urlsafe(32))"`. `rlp run` asks for it once and keeps it in `.rlp/secrets/platform.env`; in AWS it is a Secrets Manager entry an operator fills.
 
@@ -56,6 +58,8 @@ cd platform && uv run python -m rlp_platform openapi > openapi.json
 | `GET /api/v1/projects/{name}/transitions` | The project's phase history, oldest first; `include_rejected=true` adds the moves an entry rule rejected (`accepted: false`) |
 | `POST /api/v1/projects/{name}/transitions` | Move the project (`to`, `reason`, `actor`); see below |
 | `GET /api/v1/projects/{name}/retirement` | The project's retirement and each step's status; 404 when none was started |
+| `POST /api/v1/lifecycle/sweep` | Run the retirement sweep (`actor`, `idle_days`, `dry_run`): flag each `deprecated` project with no traffic in the window and open its "Retire <project>?" issue. See [lifecycle.md](lifecycle.md#retirement-sweep) |
+| `GET /api/v1/lifecycle/sweeps` | Recorded sweep runs, newest first, with every project's result |
 | `POST /api/v1/projects/{name}/retirement` | Start or resume the retirement of a `deprecated` project (`actor`, `reason`, `artifact_retention_days`, `workflow`); `dry_run: true` answers the plan. 409 when the project isn't deprecated. See [lifecycle.md](lifecycle.md#retirement) |
 | `GET /api/v1/repos?project=` | Repos by full name, optionally one project's |
 | `GET /api/v1/repos/{owner}/{name}` | One repo |
@@ -193,6 +197,7 @@ Every command takes `--output json` (`-o json`): stdout is then one JSON documen
 | `rlp repo sync [OWNER/NAME]` | Re-index one repo, or every repo the platform can see; exits 1 if any wasn't indexed |
 | `rlp lifecycle show PROJECT` | The project's phase and its history |
 | `rlp lifecycle move PROJECT PHASE --reason TEXT` | Move the project; recorded with your login name and the reason |
+| `rlp lifecycle sweep [--dry-run]` | Flag deprecated projects whose services served no traffic for `retirement_idle_days`; never retires anything. Exits 1 when an idle project's issue couldn't be filed. See [lifecycle.md](lifecycle.md#retirement-sweep) |
 | `rlp lifecycle retire PROJECT [--yes] [--status] [--reason TEXT] [--workflow FILE]` | Show a deprecated project's retirement plan; `--yes` starts or resumes it, `--status` shows each step. Exits 1 when a step failed. See [lifecycle.md](lifecycle.md#retirement) |
 | `rlp pipeline report [--deployment \| --teardown STATUS]` | Send this run's `results.json` and published artifacts as a build, the deploy stage's deployments, or a teardown's result (`destroyed` or `destroy-failed`) for each component. Exits 0 without reporting when no platform is configured or it can't be reached |
 
