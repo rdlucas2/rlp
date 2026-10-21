@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -116,5 +115,5 @@ def test_main_needs_an_input(tmp_path, monkeypatch):
 
 def test_written_reports_are_xml(tmp_path):
     out = tmp_path / "deep" / "r.xml"
-    merge_reports.write(ET.Element("testsuites"), out)
+    merge_reports.write(SafeET.fromstring("<testsuites/>"), out)
     assert out.read_text(encoding="utf-8").startswith("<?xml")

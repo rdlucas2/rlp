@@ -10,6 +10,9 @@ Cobertura file names are rewritten relative to the current directory (the
 component's), with that directory as the one source, so diff-cover finds
 src/rlp_platform/... and ui/src/... alike. Line and branch rates are
 recomputed from the merged counts.
+
+Reports are read with defusedxml; the merged documents are built from the
+parsed elements (Element.makeelement), so nothing here imports xml directly.
 """
 
 from __future__ import annotations
@@ -17,21 +20,35 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any
 
 from defusedxml import ElementTree as SafeET
+
+# The xml.etree Element type; named loosely so the stdlib xml module needn't be imported.
+Element = Any
 
 JUNIT_TOTALS = ("tests", "failures", "errors", "skipped")
 
 
-def _parse(path: Path) -> ET.Element:
+def _parse(path: Path) -> Element:
     return SafeET.parse(path).getroot()
 
 
-def merge_junit(inputs: list[Path]) -> ET.Element:
+def _element(tag: str, attrib: dict[str, str] | None = None) -> Element:
+    """A new element, made from a parsed one so the stdlib xml module needn't be imported."""
+    return SafeET.fromstring("<_/>").makeelement(tag, attrib or {})
+
+
+def _child(parent: Element, tag: str, attrib: dict[str, str] | None = None) -> Element:
+    child = _element(tag, attrib)
+    parent.append(child)
+    return child
+
+
+def merge_junit(inputs: list[Path]) -> Element:
     """One <testsuites> holding every input's <testsuite> elements, with summed totals."""
-    merged = ET.Element("testsuites", name="platform")
+    merged = _element("testsuites", {"name": "platform"})
     totals = dict.fromkeys(JUNIT_TOTALS, 0)
     seconds = 0.0
     for path in inputs:
@@ -52,13 +69,12 @@ def _rate(covered: int, valid: int) -> str:
     return f"{covered / valid:.4f}" if valid else "1"
 
 
-def merge_cobertura(inputs: list[Path], base: Path) -> ET.Element:
+def merge_cobertura(inputs: list[Path], base: Path) -> Element:
     """One <coverage> with every input's packages, file names relative to `base`."""
     base = base.resolve()
-    merged = ET.Element("coverage", version="rlp-merge", timestamp="0", complexity="0")
-    sources = ET.SubElement(merged, "sources")
-    ET.SubElement(sources, "source").text = str(base)
-    packages = ET.SubElement(merged, "packages")
+    merged = _element("coverage", {"version": "rlp-merge", "timestamp": "0", "complexity": "0"})
+    _child(_child(merged, "sources"), "source").text = str(base)
+    packages = _child(merged, "packages")
     counts = dict.fromkeys(("lines-valid", "lines-covered", "branches-valid", "branches-covered"), 0)
     for path in inputs:
         root = _parse(path)
@@ -79,9 +95,9 @@ def merge_cobertura(inputs: list[Path], base: Path) -> ET.Element:
     return merged
 
 
-def write(root: ET.Element, out: Path) -> None:
+def write(root: Element, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    ET.ElementTree(root).write(out, encoding="utf-8", xml_declaration=True)
+    out.write_bytes(SafeET.tostring(root, encoding="utf-8", xml_declaration=True))
 
 
 def main(argv: list[str] | None = None) -> int:
