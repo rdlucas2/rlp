@@ -1214,13 +1214,14 @@ def config_show(ctx: click.Context) -> None:
         "platform": {
             "url": {"value": config.url, "source": config.sources["url"]},
             "token": {"value": platform_api.mask(config.token), "source": config.sources["token"]},
+            "host": {"value": config.host, "source": config.sources["host"]},
         },
     }
     if ctx.obj["output"] == "json":
         emit_json({"ok": True, **doc})
         return
     click.echo(f"config file     {doc['path']}")
-    for key in ("url", "token"):
+    for key in ("url", "token", "host"):
         entry = doc["platform"][key]
         click.echo(f"platform.{key.ljust(6)}  {entry['value'] or '-'}  ({entry['source']})")
 

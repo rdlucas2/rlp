@@ -44,6 +44,7 @@ jobs:
 | `python-version` | `3.13` | Python used to run rlp |
 | `publish` | `true` | Publish artifacts on pushes to the default branch and on tags |
 | `platform-url` | `""` | rlp platform to report to; empty uses the `RLP_PLATFORM_URL` variable |
+| `platform-host` | `""` | `Host` header for the platform's requests, for a platform behind rlp's host-routed load balancer with no DNS (`platform-url` is then the load balancer's DNS name); empty uses the `RLP_PLATFORM_HOST` variable |
 
 The workflow sets `RLP_BASELINE` to the PR's base commit (or the commit before a push), so "new code" means what the PR or push changed. The scanners, the baseline and their settings are described in [quality-gates.md](quality-gates.md).
 
@@ -115,6 +116,7 @@ When a platform is configured, each run reports to it, so the project record sho
 To turn it on in a repo, set:
 
 - the **`RLP_PLATFORM_URL` variable** (Settings → Secrets and variables → Actions → Variables), or the workflow's `platform-url` input, to the platform's URL;
+- for a platform on AWS with no DNS yet, the **`RLP_PLATFORM_HOST` variable** (or the `platform-host` input) to its host, `platform-rlp.<env>.rlp.internal`, with `RLP_PLATFORM_URL` set to `http://<the load balancer's DNS name>` ([platform.md](platform.md#where-the-cli-finds-the-platform)). No `/etc/hosts` edit is needed on the runner;
 - the **`RLP_PLATFORM_TOKEN` secret** to the platform's `RLP_API_TOKEN`, and pass it to the workflow:
 
 ```yaml

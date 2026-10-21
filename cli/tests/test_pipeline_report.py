@@ -71,7 +71,7 @@ class FakePlatform:
 def env(monkeypatch, tmp_path):
     """A GitHub Actions run with the platform configured; no config file."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    for key in ("GITHUB_HEAD_REF", "RLP_REGISTRY", "RLP_DEPLOY_ENV"):
+    for key in ("GITHUB_HEAD_REF", "RLP_REGISTRY", "RLP_DEPLOY_ENV", platform_api.HOST_ENV):
         monkeypatch.delenv(key, raising=False)
     for key, value in GITHUB_ENV.items():
         monkeypatch.setenv(key, value)
@@ -399,6 +399,7 @@ def test_golden_reports_only_with_a_platform_and_never_fails_the_pipeline():
         assert step["if"].startswith("always() && ")
         assert "(inputs.platform-url || vars.RLP_PLATFORM_URL) != ''" in step["if"]
         assert step["env"]["RLP_PLATFORM_TOKEN"] == "${{ secrets.RLP_PLATFORM_TOKEN }}"
+        assert step["env"]["RLP_PLATFORM_HOST"] == "${{ inputs.platform-host || vars.RLP_PLATFORM_HOST }}"
         assert 'if [ -z "$RLP_PLATFORM_TOKEN" ]' in step["run"]
     assert "--deployment" in steps[("deploy", "Report the deployment to the platform")]["run"]
     assert '--teardown "$status"' in steps[("destroy", "Report the teardown to the platform")]["run"]
