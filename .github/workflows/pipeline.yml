@@ -10,6 +10,11 @@
 #   RLP_AWS_PLAN_ROLE_ARN     bootstrap output plan_role_arn
 #   RLP_AWS_DEPLOY_ROLE_ARN   bootstrap output deploy_role_arn
 #   RLP_TF_STATE_BUCKET       bootstrap output state_bucket
+#
+# Reporting to the rlp platform is off until these are set (docs/pipeline.md):
+#   RLP_PLATFORM_URL          variable: the platform's URL (the load balancer's, without DNS)
+#   RLP_PLATFORM_HOST         variable, optional: its host, when the URL is the load balancer's
+#   RLP_PLATFORM_TOKEN        secret: the platform's RLP_API_TOKEN
 name: pipeline
 
 on:
@@ -22,6 +27,14 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # The platform's retirement workflow tears an environment down through this
+  # workflow (rlp lifecycle retire; docs/pipeline.md#teardown-runs).
+  workflow_dispatch:
+    inputs:
+      destroy-env:
+        description: AWS environment to tear down instead of running the pipeline
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -40,8 +53,11 @@ jobs:
       aws-plan-role-arn: ${{ vars.RLP_AWS_PLAN_ROLE_ARN }}
       aws-deploy-role-arn: ${{ vars.RLP_AWS_DEPLOY_ROLE_ARN }}
       tf-state-bucket: ${{ vars.RLP_TF_STATE_BUCKET }}
+      destroy-env: ${{ inputs.destroy-env || '' }}
     secrets:
       infracost-api-key: ${{ secrets.INFRACOST_API_KEY }}
+      # Reports go to the platform only when RLP_PLATFORM_URL is set too.
+      RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
     permissions:
       contents: write          # publish: attach zips and jars to GitHub Releases
       packages: write          # publish: push the platform image to GHCR
