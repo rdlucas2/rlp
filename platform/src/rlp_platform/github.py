@@ -2,7 +2,8 @@
 
 The repo indexer reads repos and files. The retirement workflow dispatches a
 repo's pipeline to tear an environment down, archives repos, and deletes
-container image versions from GHCR.
+container image versions from GHCR. The retirement sweep opens and updates
+one "Retire <project>?" issue per idle project.
 
 Requests carry RLP_GITHUB_TOKEN when it is set; without it only public repos
 can be read. Pass `transport` to answer the calls from recorded responses
@@ -202,3 +203,31 @@ class GitHub:
         if resp.status_code != 204:
             raise _refused(f"deleting {name} from {full_name} {tag}", resp)
         return True
+
+    def find_issue(self, full_name: str, title: str) -> dict[str, Any] | None:
+        """The open issue (not a pull request) titled exactly `title`, or None."""
+        for page in range(1, MAX_PAGES + 1):
+            params = {"state": "open", "per_page": PER_PAGE, "page": page}
+            batch = self._json(f"{_repo(full_name)}/issues", params=params)
+            for issue in batch:
+                if "pull_request" not in issue and issue.get("title") == title:
+                    return dict(issue)
+            if len(batch) < PER_PAGE:
+                break
+        return None
+
+    def create_issue(self, full_name: str, title: str, body: str) -> dict[str, Any]:
+        """Open an issue; returns GitHub's issue document (number, html_url, ...)."""
+        resp = self._send("POST", f"{_repo(full_name)}/issues", json={"title": title, "body": body})
+        if resp.status_code != 201:
+            raise _refused(f"opening an issue in {full_name}", resp)
+        return dict(resp.json())
+
+    def update_issue(self, full_name: str, number: int, body: str) -> dict[str, Any] | None:
+        """Replace the body of issue `number`; None when the issue is gone (deleted, or the repo moved)."""
+        resp = self._send("PATCH", f"{_repo(full_name)}/issues/{int(number)}", json={"body": body})
+        if resp.status_code in (404, 410):
+            return None
+        if resp.status_code != 200:
+            raise _refused(f"updating issue {number} of {full_name}", resp)
+        return dict(resp.json())

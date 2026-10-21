@@ -1058,6 +1058,231 @@
         "title": "StageResultIn",
         "type": "object"
       },
+      "SweepOut": {
+        "properties": {
+          "disabled": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the sweep did nothing (RLP_LOOPS=off); null when it ran",
+            "title": "Disabled"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "idle_days": {
+            "title": "Idle Days",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SweepResultOut"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The recorded run; null for a dry run or a disabled sweep",
+            "title": "Run Id"
+          },
+          "window_end": {
+            "format": "date-time",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "disabled",
+          "dry_run",
+          "idle_days",
+          "window_start",
+          "window_end",
+          "run_id",
+          "results"
+        ],
+        "title": "SweepOut",
+        "type": "object"
+      },
+      "SweepRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "default": "api",
+            "description": "Who ran the sweep.",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Answer each project's result and change nothing.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "idle_days": {
+            "default": 30,
+            "description": "Days with no traffic that make a deprecated project idle (retirement_idle_days in policy/platform/data.yaml).",
+            "minimum": 1.0,
+            "title": "Idle Days",
+            "type": "integer"
+          }
+        },
+        "title": "SweepRequest",
+        "type": "object"
+      },
+      "SweepResultOut": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "environments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "issue_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the issue could not be opened or updated",
+            "title": "Issue Error"
+          },
+          "issue_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The \"Retire <project>?\" issue of an idle project",
+            "title": "Issue Url"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "requests": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Requests in the window; null when unknown",
+            "title": "Requests"
+          },
+          "result": {
+            "description": "idle (flagged), active, or unknown (no AWS deployment, or no traffic data)",
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "result",
+          "detail",
+          "environments",
+          "requests",
+          "issue_url",
+          "issue_error"
+        ],
+        "title": "SweepResultOut",
+        "type": "object"
+      },
+      "SweepRunOut": {
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "idle_days": {
+            "title": "Idle Days",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SweepResultOut"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "window_end": {
+            "format": "date-time",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor",
+          "idle_days",
+          "window_start",
+          "window_end",
+          "started_at",
+          "finished_at",
+          "results"
+        ],
+        "title": "SweepRunOut",
+        "type": "object"
+      },
       "SyncOut": {
         "properties": {
           "ok": {
@@ -1442,6 +1667,110 @@
         "summary": "Github Webhook",
         "tags": [
           "indexer"
+        ]
+      }
+    },
+    "/api/v1/lifecycle/sweep": {
+      "post": {
+        "description": "Flag deprecated projects whose services served no traffic in the window (see docs/lifecycle.md).\n\nAn idle project gets a flag and one \"Retire <project>?\" issue in its first repo; nothing is retired.\nRLP_LOOPS=off answers `disabled` and changes nothing, as does dry_run.",
+        "operationId": "run_sweep_api_v1_lifecycle_sweep_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SweepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SweepOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Sweep",
+        "tags": [
+          "lifecycle"
+        ]
+      }
+    },
+    "/api/v1/lifecycle/sweeps": {
+      "get": {
+        "description": "Recorded sweep runs, newest first, with every project's result.",
+        "operationId": "list_sweeps_api_v1_lifecycle_sweeps_get",
+        "parameters": [
+          {
+            "description": "Return at most this many, newest first.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "description": "Return at most this many, newest first.",
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SweepRunOut"
+                  },
+                  "title": "Response List Sweeps Api V1 Lifecycle Sweeps Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Sweeps",
+        "tags": [
+          "lifecycle"
         ]
       }
     },

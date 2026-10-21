@@ -6,6 +6,7 @@ python -m rlp_platform migrate --check     also fail if the models and migration
 python -m rlp_platform openapi             print the OpenAPI spec (platform/openapi.json)
 python -m rlp_platform sync [OWNER/NAME]   re-index repos from GitHub (RLP_GITHUB_REPOS, else the installation's)
 python -m rlp_platform expire-artifacts    delete artifacts past their expires_at from GHCR and GitHub releases
+python -m rlp_platform sweep [--dry-run]   flag deprecated projects that served no traffic (RLP_LOOPS=off stops it)
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import sys
 
 import uvicorn
 
-from rlp_platform import db, indexer, logs, retirement
+from rlp_platform import db, indexer, logs, retirement, sweep
 from rlp_platform.app import create_app, openapi_json
 from rlp_platform.config import REPO_NAME, ConfigError, Settings
 from rlp_platform.github import GitHub, GitHubError
@@ -101,6 +102,44 @@ def expire_artifacts(settings: Settings, transport=None) -> int:
     return 0 if ok else 1
 
 
+def sweep_command(
+    settings: Settings, *, idle_days: int, dry_run: bool, transport=None, traffic: sweep.TrafficSource | None = None
+) -> int:
+    """Run the retirement sweep; print the results as one JSON line. Exit 1 if an idle project's issue failed."""
+    if not settings.database_url:
+        log.error("DATABASE_URL is not set")
+        return 2
+    why = ""
+    if traffic is None:
+        traffic, why = sweep.traffic_from_settings(settings)
+    factory = session_factory(settings.database_url)
+    with GitHub(settings.github_api_url, settings.github_token, transport=transport) as gh, factory() as session:
+        result = sweep.run(
+            session,
+            gh,
+            traffic,
+            idle_days=idle_days,
+            actor="python -m rlp_platform sweep",
+            dry_run=dry_run,
+            loops_off=settings.loops_off,
+            why_no_traffic=why,
+            commit=session.commit,
+        )
+        session.commit()
+    doc = {
+        "ok": result.ok,
+        "disabled": result.disabled,
+        "dry_run": result.dry_run,
+        "idle_days": result.idle_days,
+        "window_start": result.window_start.isoformat(),
+        "window_end": result.window_end.isoformat(),
+        "run_id": result.run_id,
+        "results": [r.as_dict() for r in result.results],
+    }
+    sys.stdout.write(json.dumps(doc) + "\n")
+    return 0 if result.ok else 1
+
+
 def openapi() -> int:
     """Print the API's OpenAPI document as platform/openapi.json holds it."""
     sys.stdout.write(openapi_json(create_app(Settings.from_env({}))))
@@ -121,6 +160,16 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "expire-artifacts", help="delete artifacts past their expires_at from their registry; safe to run repeatedly"
     )
+    sweep_parser = commands.add_parser(
+        "sweep", help="flag deprecated projects whose services served no traffic; never retires anything"
+    )
+    sweep_parser.add_argument(
+        "--idle-days",
+        type=int,
+        default=sweep.DEFAULT_IDLE_DAYS,
+        help="the window with no traffic that makes a project idle (retirement_idle_days in policy/platform/data.yaml)",
+    )
+    sweep_parser.add_argument("--dry-run", action="store_true", help="report each project's result and change nothing")
     args = parser.parse_args([] if argv is None else argv)
     if args.command == "openapi":
         return openapi()
@@ -132,6 +181,10 @@ def main(argv: list[str] | None = None) -> int:
         return sync(settings, args.repo)
     if args.command == "expire-artifacts":
         return expire_artifacts(settings)
+    if args.command == "sweep":
+        if args.idle_days < 1:
+            parser.error("--idle-days must be at least 1")
+        return sweep_command(settings, idle_days=args.idle_days, dry_run=args.dry_run)
     return serve(settings)
 
 

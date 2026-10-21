@@ -70,6 +70,7 @@ def create_app(settings: Settings | None = None, *, opa_path: str | None = None)
     app.state.session_factory = api.make_session_factory(app.state.settings)
     app.state.opa_path = opa_path
     app.state.github_transport = None  # tests answer GitHub calls from recorded responses
+    app.state.traffic_source = None  # tests count traffic with a fake; else RLP_SWEEP_ROLE_ARN configures it
     app.include_router(router)
     app.include_router(api.router)
     app.include_router(api.hooks)
