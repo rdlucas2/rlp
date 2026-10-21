@@ -18,6 +18,7 @@ from rlp_platform.store import (
     projects,
     repos,
     retirements,
+    sweeps,
     transitions,
 )
 from rlp_platform.store._base import NotFound, UnknownField
@@ -38,5 +39,6 @@ __all__ = [
     "repos",
     "retirements",
     "session_factory",
+    "sweeps",
     "transitions",
 ]
