@@ -1,3 +1,11 @@
+# UI stage: build the inventory UI (ui/) into static files; none of Node ships in the image.
+FROM node:22-slim AS ui
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ui/.npmrc ./
+RUN npm ci --no-audit --no-fund
+COPY ui/ ./
+RUN npm run build
+
 # Build stage: install the locked runtime dependencies and the app into /app/.venv.
 FROM python:3.13-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /usr/local/bin/uv
@@ -23,7 +31,10 @@ RUN python -m pip uninstall --yes --no-input pip setuptools \
     && useradd --system --uid 10001 --no-create-home app
 COPY --from=build /app/.venv /app/.venv
 COPY --from=build /opt/opa/opa /usr/local/bin/opa
+# The platform serves the UI at / (rlp_platform.ui); the API stays under /api.
+COPY --from=ui /ui/dist /app/ui
 ENV PATH=/app/.venv/bin:$PATH \
+    RLP_UI_DIR=/app/ui \
     PYTHONUNBUFFERED=1 \
     HOST=0.0.0.0 \
     PORT=8000

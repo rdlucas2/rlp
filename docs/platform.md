@@ -25,6 +25,12 @@ export DATABASE_URL=postgresql://app:app@127.0.0.1:5432/app RLP_API_TOKEN=... RL
 uv run python -m rlp_platform
 ```
 
+## Inventory UI
+
+The platform serves a React UI (`platform/ui/`) at `/`, built into the image; the API stays under `/api`. The inventory lists every project with its owner, phase, repo count, latest build and last deployment, filterable by phase and searchable by name; the filter is in the URL (`/?phase=in-dev&q=orders`), so a reload or a shared link keeps it. A project's page (`/projects/{name}`) shows its description, owner and dashboard link, its lifecycle history with each move's rule results (rejected moves too), its repos with their components and template versions, the latest build per repo with a link to the run, and the current deployment per environment.
+
+The UI reads only the API, so everything it shows is also available through `rlp`. It asks for `RLP_API_TOKEN` once per browser session and keeps it in `sessionStorage`; a 401 sends it back to the token prompt. See `platform/README.md` for working on it.
+
 ## Authentication
 
 rlp is single-user until slice 6, so one token stands in for users and roles. Every `/api/v1` route but the GitHub webhook needs `Authorization: Bearer <token>`; the service compares it with `RLP_API_TOKEN` in constant time and answers 401 with `WWW-Authenticate: Bearer` when it is missing or wrong. With no token configured and the API not disabled, every request answers 401. `/healthz` and `/readyz` stay open. `POST /api/v1/hooks/github` takes no bearer token (GitHub can't send one): it checks each delivery's `X-Hub-Signature-256` instead.

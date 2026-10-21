@@ -8,3 +8,6 @@ reports
 .pytest_cache
 .ruff_cache
 .coverage
+ui/node_modules
+ui/dist
+ui/reports

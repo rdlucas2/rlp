@@ -10,6 +10,7 @@ A FastAPI service rendered from the [rlp python-fastapi template](https://github
 | `/readyz` | Readiness: `DATABASE_URL`, when set, is reachable |
 | `/hello/{name}` | Sample route |
 | `/api/v1/...` | The project record and lifecycle moves, behind a bearer token; spec in [`openapi.json`](openapi.json), guide in [docs/platform.md](../docs/platform.md) |
+| `/`, `/projects/{name}` | The inventory UI ([`ui/`](ui/)), when `RLP_UI_DIR` names its build; every other path outside `/api` gets the UI's `index.html` |
 
 ## Configuration
 
@@ -24,6 +25,7 @@ Only environment variables, as declared under `config` in `rlp.yaml`:
 | `RLP_API_TOKEN` | unset | Bearer token for `/api/v1`; the service won't start without it unless `RLP_API_TOKEN_DISABLED=true` |
 | `RLP_API_TOKEN_DISABLED` | `false` | `true` serves `/api/v1` without a token, for local development |
 | `RLP_MIGRATE_ON_START` | `false` | `true` applies pending migrations before the service starts; needs `DATABASE_URL` |
+| `RLP_UI_DIR` | unset (`/app/ui` in the image) | The built inventory UI to serve at `/`; unset, `/` answers 404 |
 | `OTEL_*` | unset | Standard OpenTelemetry settings, for example `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` |
 
 Logs are JSON, one object per line on stdout, with `trace_id` and `span_id` when a span is active.
@@ -55,18 +57,31 @@ After changing a model, add a revision and commit it with the change; `migrate -
 
 ## Lifecycle
 
-A project moves through `proposed`, `designed`, `scaffolded`, `in-dev`, `live`, `deprecated` and `retired`. [`rlp_platform.lifecycle.transition()`](src/rlp_platform/lifecycle.py) checks each move against the Rego entry rules in [`src/rlp_platform/policy/lifecycle/`](src/rlp_platform/policy/lifecycle/) (a copy of `policy/lifecycle/` at the rlp repo root) with `opa eval`, then sets the phase and records a `lifecycle_transitions` row with the rule results, or writes nothing and returns the failing rules. The image ships the pinned OPA at `/usr/local/bin/opa` ([`src/rlp_platform/opa.py`](src/rlp_platform/opa.py)); the tests use the `opa` on `PATH`, or download the pinned one. The phases, moves and rules are in the rlp repo's [docs/lifecycle.md](https://github.com/rdlucas2/rlp/blob/main/docs/lifecycle.md).
+A project moves through `proposed`, `designed`, `scaffolded`, `in-dev`, `live`, `deprecated` and `retired`. [`rlp_platform.lifecycle.transition()`](src/rlp_platform/lifecycle.py) checks each move against the Rego entry rules in [`src/rlp_platform/policy/lifecycle/`](src/rlp_platform/policy/lifecycle/) (a copy of `policy/lifecycle/` at the rlp repo root) with `opa eval`, then sets the phase and records a `lifecycle_transitions` row with the rule results, or leaves the phase alone, records the attempt as rejected (`accepted` false) and returns the failing rules. The image ships the pinned OPA at `/usr/local/bin/opa` ([`src/rlp_platform/opa.py`](src/rlp_platform/opa.py)); the tests use the `opa` on `PATH`, or download the pinned one. The phases, moves and rules are in the rlp repo's [docs/lifecycle.md](https://github.com/rdlucas2/rlp/blob/main/docs/lifecycle.md).
 
 ## Standard verbs
 
 ```sh
-rlp setup     # uv sync --locked
-rlp lint      # ruff check and ruff format --check
-rlp test      # pytest; reports/junit.xml and reports/coverage.xml
-rlp build     # byte-compile src/
-rlp package   # docker build
+rlp setup     # uv sync --locked; npm ci in ui/
+rlp lint      # ruff check and ruff format --check; ESLint and tsc --noEmit in ui/
+rlp test      # pytest and Vitest; merged into reports/junit.xml and reports/coverage.xml
+rlp build     # byte-compile src/; vite build into ui/dist
+rlp package   # docker build (builds the UI in a Node stage and serves it at /)
 rlp run       # start the service on $PORT
 rlp smoke     # check /healthz and /readyz of a running instance
 ```
+
+## Inventory UI
+
+[`ui/`](ui/) is a Vite + React + TypeScript app (Node 20.19 or later). It lists every project, filterable by phase and searchable by name (both kept in the URL), and shows each project's repos, components, latest builds, deployments per environment and lifecycle history, rejected moves and their failing rules included. It reads only `/api/v1`. It asks for the API token once and keeps it in `sessionStorage`; a 401 asks again.
+
+```sh
+cd ui && npm ci
+npm run dev     # http://127.0.0.1:5173, proxying /api to a platform on 127.0.0.1:8000
+npm run lint    # ESLint and tsc --noEmit
+npm test        # Vitest; ui/reports/junit.xml and ui/reports/coverage/cobertura-coverage.xml
+```
+
+`task test` merges the UI's reports with pytest's ([`scripts/merge_reports.py`](scripts/merge_reports.py)), so the pipeline's test count and coverage gates cover both.
 
 `rlp pipeline run` runs every gate locally, exactly as `.github/workflows/pipeline.yml` does in CI. Update the repo to a newer template version with `rlp update`.

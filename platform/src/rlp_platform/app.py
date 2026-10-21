@@ -1,4 +1,4 @@
-"""The FastAPI application: health endpoints, the /api/v1 routes (rlp_platform.api) and one sample route."""
+"""The FastAPI application: health endpoints, the /api/v1 routes (rlp_platform.api), one sample route and the UI."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, FastAPI, Request, Response, status
 
-from rlp_platform import __version__, api, telemetry
+from rlp_platform import __version__, api, telemetry, ui
 from rlp_platform.config import Settings
 
 log = logging.getLogger(__name__)
@@ -73,6 +73,9 @@ def create_app(settings: Settings | None = None, *, opa_path: str | None = None)
     app.include_router(router)
     app.include_router(api.router)
     app.include_router(api.hooks)
+    # Last: the UI answers every GET the routes above don't.
+    if app.state.settings.ui_dir:
+        ui.mount(app, app.state.settings.ui_dir)
     telemetry.setup(app)
     return app
 

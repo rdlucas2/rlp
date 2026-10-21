@@ -31,6 +31,8 @@ class Settings:
     # Repos `sync` indexes; empty means every repo the token's installation can see.
     github_repos: tuple[str, ...] = ()
     github_api_url: str = GITHUB_API_URL
+    # The built inventory UI (platform/ui/dist); the image sets it. Unset, / serves nothing.
+    ui_dir: str | None = None
 
     def check_api_auth(self) -> None:
         """Refuse to serve an open API: RLP_API_TOKEN must be set unless RLP_API_TOKEN_DISABLED=true."""
@@ -79,6 +81,7 @@ class Settings:
             github_token=env.get("RLP_GITHUB_TOKEN") or None,
             github_repos=github_repos,
             github_api_url=github_api_url,
+            ui_dir=env.get("RLP_UI_DIR") or None,
         )
 
 
