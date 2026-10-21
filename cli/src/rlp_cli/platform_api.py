@@ -155,6 +155,28 @@ class Rejection(TypedDict):
     results: list[RuleResult]
 
 
+class RetirementStep(TypedDict):
+    kind: str
+    repo: str | None
+    environment: str | None
+    status: str
+    detail: str
+    started_at: str | None
+    updated_at: str | None
+
+
+class Retirement(TypedDict):
+    project: str
+    state: str
+    actor: str
+    reason: str
+    artifact_retention_days: int
+    started_at: str | None
+    finished_at: str | None
+    steps: list[RetirementStep]
+    rejected: Rejection | None
+
+
 class TransitionRejected(PlatformError):
     """The lifecycle refused a move: at least one entry rule failed. Nothing changed."""
 
@@ -361,3 +383,24 @@ class PlatformClient:
             if err.status == 409 and isinstance(err.body, dict) and "failures" in err.body:
                 raise TransitionRejected(cast(Rejection, err.body)) from err
             raise
+
+    def get_retirement(self, project: str) -> Retirement:
+        return self._call("GET", f"/projects/{_segment(project)}/retirement")
+
+    def retire(
+        self,
+        project: str,
+        *,
+        actor: str = "rlp-cli",
+        reason: str = "",
+        artifact_retention_days: int | None = None,
+        workflow: str | None = None,
+        dry_run: bool = False,
+    ) -> Retirement:
+        """Start or resume the project's retirement; with dry_run, only answer its plan."""
+        body: dict[str, Any] = {"actor": actor, "reason": reason, "dry_run": dry_run}
+        if artifact_retention_days is not None:
+            body["artifact_retention_days"] = artifact_retention_days
+        if workflow:
+            body["workflow"] = workflow
+        return self._call("POST", f"/projects/{_segment(project)}/retirement", json=body)

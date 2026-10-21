@@ -392,6 +392,7 @@ def test_golden_reports_only_with_a_platform_and_never_fails_the_pipeline():
         ("gates", "Report the build to the platform"),
         ("publish", "Report the artifacts to the platform"),
         ("deploy", "Report the deployment to the platform"),
+        ("destroy", "Report the teardown to the platform"),
     }
     for step in steps.values():
         assert step["continue-on-error"] is True
@@ -400,6 +401,7 @@ def test_golden_reports_only_with_a_platform_and_never_fails_the_pipeline():
         assert step["env"]["RLP_PLATFORM_TOKEN"] == "${{ secrets.RLP_PLATFORM_TOKEN }}"
         assert 'if [ -z "$RLP_PLATFORM_TOKEN" ]' in step["run"]
     assert "--deployment" in steps[("deploy", "Report the deployment to the platform")]["run"]
+    assert '--teardown "$status"' in steps[("destroy", "Report the teardown to the platform")]["run"]
     # The token reaches only the report steps, never a job's env (where the repo's own verbs would see it).
     for spec in workflow["jobs"].values():
         assert "RLP_PLATFORM_TOKEN" not in (spec.get("env") or {})
