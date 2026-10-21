@@ -12,6 +12,8 @@
 #       uses: rdlucas2/rlp/.github/workflows/golden.yml@<rlp git ref>
 #       with:
 #         rlp-version: "0.2.0"
+#       secrets:
+#         RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}  # optional: report builds and deployments
 #       permissions:
 #         contents: write          # publish: attach zips and jars to releases
 #         packages: write          # publish: push images to GHCR
@@ -73,7 +75,16 @@ on:
         description: Publish artifacts on pushes to the default branch and on tags
         type: boolean
         default: true
+      platform-url:
+        description: >-
+          rlp platform to report builds and deployments to. Empty uses the
+          RLP_PLATFORM_URL variable; with neither, nothing is reported.
+        type: string
+        default: ""
     secrets:
+      RLP_PLATFORM_TOKEN:
+        description: The rlp platform's API token, for reporting builds and deployments
+        required: false
       infracost-api-key:
         description: >-
           Infracost API key for the cost stage. Without it the stage is skipped,
@@ -213,6 +224,22 @@ jobs:
             ${{ inputs.working-directory }}/.rlp/pipeline/results.json
             ${{ inputs.working-directory }}/.rlp/pipeline/reports/
           if-no-files-found: warn
+      # Report the gate results to the rlp platform as this run's build (#94),
+      # only when a platform is configured. A report never fails the pipeline.
+      # The token is in this step's env only, not in the steps that run the repo's code.
+      - name: Report the build to the platform
+        if: always() && (inputs.platform-url || vars.RLP_PLATFORM_URL) != ''
+        continue-on-error: true
+        env:
+          RLP_PLATFORM_URL: ${{ inputs.platform-url || vars.RLP_PLATFORM_URL }}
+          RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$RLP_PLATFORM_TOKEN" ]; then
+            echo "::notice::RLP_PLATFORM_TOKEN is not set, so the build is not reported"
+            exit 0
+          fi
+          if command -v rlp >/dev/null; then rlp pipeline report --commit "$HEAD_SHA"; fi
 
   # An agent-authored change that touches a gate (the policy stage's
   # data.gate_changes, from the rlp.agent rules) merges only after a human who is
@@ -308,6 +335,19 @@ jobs:
           args=(--registry "$registry" --component "$RLP_COMPONENTS")
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then args+=(--release "$GITHUB_REF_NAME"); fi
           rlp publish "${args[@]}"
+      # Add what was published (image digests, release asset URLs) to this run's build.
+      - name: Report the artifacts to the platform
+        if: always() && (inputs.platform-url || vars.RLP_PLATFORM_URL) != ''
+        continue-on-error: true
+        env:
+          RLP_PLATFORM_URL: ${{ inputs.platform-url || vars.RLP_PLATFORM_URL }}
+          RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
+        run: |
+          if [ -z "$RLP_PLATFORM_TOKEN" ]; then
+            echo "::notice::RLP_PLATFORM_TOKEN is not set, so the artifacts are not reported"
+            exit 0
+          fi
+          if command -v rlp >/dev/null; then rlp pipeline report --commit "$GITHUB_SHA"; fi
 
   # Plan and estimate the cost on every run with deploy-env; apply only on
   # pushes to the default branch. AWS credentials come from GitHub OIDC: the job exchanges its ID
@@ -417,6 +457,21 @@ jobs:
           args=(--stage deploy --component "$RLP_COMPONENTS" --deploy-env "$RLP_DEPLOY_ENV")
           if [ "$RLP_DEPLOY_LOCAL" = "true" ]; then args+=(--deploy-local); fi
           rlp pipeline run "${args[@]}"
+      # Report each component the deploy stage deployed (#94); a skipped deploy reports nothing.
+      - name: Report the deployment to the platform
+        if: always() && env.APPLY == 'true' && (inputs.platform-url || vars.RLP_PLATFORM_URL) != ''
+        continue-on-error: true
+        env:
+          RLP_PLATFORM_URL: ${{ inputs.platform-url || vars.RLP_PLATFORM_URL }}
+          RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
+        run: |
+          if [ -z "$RLP_PLATFORM_TOKEN" ]; then
+            echo "::notice::RLP_PLATFORM_TOKEN is not set, so the deployment is not reported"
+            exit 0
+          fi
+          if command -v rlp >/dev/null; then
+            rlp pipeline report --deployment --commit "$GITHUB_SHA" --component "$RLP_COMPONENTS" --deploy-env "$RLP_DEPLOY_ENV"
+          fi
       - name: Deploy summary
         if: always()
         run: |

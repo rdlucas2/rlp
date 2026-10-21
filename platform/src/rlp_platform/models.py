@@ -17,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     MetaData,
     String,
     Text,
@@ -134,12 +135,19 @@ class Component(Base):
 
 
 class Artifact(Base):
-    """Something a component's package verb produced: an image digest, a zip URI, a jar."""
+    """Something a component's package verb produced: an image digest, a zip URI, a jar.
+
+    An artifact a pipeline run reported links to its build. Until the indexer
+    has seen the repo and the component, `component_id` is None and
+    `component_name` says which component it belongs to.
+    """
 
     __tablename__ = "artifacts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    component_id: Mapped[int] = mapped_column(_restrict("components.id"), index=True)
+    component_id: Mapped[int | None] = mapped_column(_restrict("components.id"), index=True)
+    build_id: Mapped[int | None] = mapped_column(_restrict("builds.id"), index=True)
+    component_name: Mapped[str | None] = mapped_column(String(200))
     kind: Mapped[str] = mapped_column(String(100))
     reference: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = _created_at()
@@ -147,14 +155,27 @@ class Artifact(Base):
 
 
 class Build(Base):
-    """One pipeline run on a repo commit, with each gate stage's result."""
+    """One pipeline run attempt on a repo commit, with each gate stage's result.
+
+    A run attempt is recorded once: (repo, commit, run id, run attempt) is unique.
+    A build reported for a repo the indexer hasn't seen yet keeps `repo_id`
+    None and is attached when the repo is first indexed.
+    """
 
     __tablename__ = "builds"
+    __table_args__ = (
+        UniqueConstraint("repo_full_name", "commit", "run_id", "run_attempt", name="uq_builds_repo_commit_run"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    repo_id: Mapped[int] = mapped_column(_restrict("repos.id"), index=True)
+    repo_id: Mapped[int | None] = mapped_column(_restrict("repos.id"), index=True)
+    # OWNER/NAME as the pipeline reported it.
+    repo_full_name: Mapped[str] = mapped_column(String(200))
     commit: Mapped[str] = mapped_column(String(64))
     branch: Mapped[str] = mapped_column(String(200))
+    # GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT; "local" and 1 outside Actions.
+    run_id: Mapped[str] = mapped_column(String(100))
+    run_attempt: Mapped[int] = mapped_column(Integer)
     workflow_run_url: Mapped[str | None] = mapped_column(Text)
     stages: Mapped[dict[str, Any]] = mapped_column(JsonDocument, default=dict)
     passed: Mapped[bool]
@@ -163,9 +184,14 @@ class Build(Base):
 
 
 class Deployment(Base):
-    """An artifact of a component deployed to an environment."""
+    """An artifact of a component deployed to an environment; one per component, environment, artifact and time."""
 
     __tablename__ = "deployments"
+    __table_args__ = (
+        UniqueConstraint(
+            "component_id", "environment", "artifact_id", "deployed_at", name="uq_deployments_component_env_artifact_at"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     component_id: Mapped[int] = mapped_column(_restrict("components.id"), index=True)

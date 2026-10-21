@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -13,11 +14,33 @@ from rlp_platform.store import _base
 UPDATABLE = frozenset({"status"})
 
 
-def create(session: Session, *, component_id: int, environment: str, artifact_id: int, status: str) -> Deployment:
-    return _base.add(
-        session,
-        Deployment(component_id=component_id, environment=environment, artifact_id=artifact_id, status=status),
+def create(
+    session: Session,
+    *,
+    component_id: int,
+    environment: str,
+    artifact_id: int,
+    status: str,
+    deployed_at: datetime | None = None,
+) -> Deployment:
+    """`deployed_at` defaults to the database's now()."""
+    record = Deployment(component_id=component_id, environment=environment, artifact_id=artifact_id, status=status)
+    if deployed_at is not None:
+        record.deployed_at = deployed_at
+    return _base.add(session, record)
+
+
+def find(
+    session: Session, *, component_id: int, environment: str, artifact_id: int, deployed_at: datetime
+) -> Deployment | None:
+    """The deployment recorded for exactly this component, environment, artifact and time, if any."""
+    query = select(Deployment).where(
+        Deployment.component_id == component_id,
+        Deployment.environment == environment,
+        Deployment.artifact_id == artifact_id,
+        Deployment.deployed_at == deployed_at,
     )
+    return session.scalars(query).one_or_none()
 
 
 def get(session: Session, deployment_id: int) -> Deployment:

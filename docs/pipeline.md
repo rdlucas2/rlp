@@ -37,10 +37,12 @@ jobs:
 | Secret | Meaning |
 | --- | --- |
 | `infracost-api-key` | Optional. Infracost API key for the `cost` stage; pass `${{ secrets.INFRACOST_API_KEY }}` |
+| `RLP_PLATFORM_TOKEN` | Optional. The rlp platform's API token, for [reporting to the platform](#reporting-to-the-platform); pass `${{ secrets.RLP_PLATFORM_TOKEN }}` |
 | `components` | `""` | Comma-separated component names; empty means all |
 | `working-directory` | `.` | Where the project's `rlp.yaml` lives inside the checkout |
 | `python-version` | `3.13` | Python used to run rlp |
 | `publish` | `true` | Publish artifacts on pushes to the default branch and on tags |
+| `platform-url` | `""` | rlp platform to report to; empty uses the `RLP_PLATFORM_URL` variable |
 
 The workflow sets `RLP_BASELINE` to the PR's base commit (or the commit before a push), so "new code" means what the PR or push changed. The scanners, the baseline and their settings are described in [quality-gates.md](quality-gates.md).
 
@@ -97,6 +99,35 @@ The `publish` job runs only on pushes to the default branch and on tags, and onl
 | `static` | published by its static-site deploy (later slice) |
 
 Verbs get `RLP_PROJECT`, `RLP_COMPONENT`, `RLP_VERSION` (the short commit SHA), and `RLP_IMAGE` for images or `RLP_ARTIFACT` for files. So a package task builds `docker build -t "$RLP_IMAGE" .` and never guesses names.
+
+### Reporting to the platform
+
+When a platform is configured, each run reports to it, so the project record shows what was built, whether it passed, and what runs where ([platform.md](platform.md#builds-and-deployments)):
+
+| Job | Step | Reports |
+| --- | --- | --- |
+| `gates` | Report the build to the platform | `results.json` as this run attempt's build, passed or failed, with every stage's result |
+| `publish` | Report the artifacts to the platform | the published image digests and release asset URLs (from `.rlp/pipeline/published.json`), added to the same build |
+| `deploy` | Report the deployment to the platform | each deployed component: environment, image, `succeeded` or `failed`, and when (default branch only) |
+
+To turn it on in a repo, set:
+
+- the **`RLP_PLATFORM_URL` variable** (Settings → Secrets and variables → Actions → Variables), or the workflow's `platform-url` input, to the platform's URL;
+- the **`RLP_PLATFORM_TOKEN` secret** to the platform's `RLP_API_TOKEN`, and pass it to the workflow:
+
+```yaml
+jobs:
+  golden:
+    uses: rdlucas2/rlp/.github/workflows/golden.yml@<ref>
+    with:
+      rlp-version: "0.2.0"
+    secrets:
+      RLP_PLATFORM_TOKEN: ${{ secrets.RLP_PLATFORM_TOKEN }}
+```
+
+Without the URL the report steps are skipped, and the pipeline behaves exactly as before; without the token they print a notice and do nothing. A report never fails the pipeline: the steps run with `continue-on-error`, and `rlp pipeline report` itself exits 0 with a warning when the platform can't be reached. The token is set only on the report steps, never on the steps that run the repo's verbs.
+
+A build is identified by the repo, the commit (a pull request's head commit, not its merge commit), `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT`, so a re-run attempt is a new build and reporting the same attempt twice records one. Locally the run is `local`, attempt 1: `rlp pipeline report --repo OWNER/NAME` with `RLP_PLATFORM_URL` and `RLP_PLATFORM_TOKEN` set sends your last `rlp pipeline run`.
 
 ## Running it locally
 

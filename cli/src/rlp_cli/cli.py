@@ -17,7 +17,7 @@ from pathlib import Path
 
 import click
 
-from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, gate_review, infra, loop, loop_pr, loop_summary, onboard, pipeline, platform_api, policy, publish, reports, runtime, scaffold, secrets, verbs
+from rlp_cli import __version__, agent, artifacts, baseline, certify, change, contract, coverage, escalate, gate_review, infra, loop, loop_pr, loop_summary, onboard, pipeline, pipeline_report, platform_api, policy, publish, reports, runtime, scaffold, secrets, verbs
 
 OUTPUT_CHOICE = click.Choice(["text", "json"])
 
@@ -681,6 +681,7 @@ def publish_cmd(ctx: click.Context, root: Path, registry: str | None, release: s
         done = publish.publish(root, doc, registry, release, split_components(components))
     except (contract.ContractError, publish.PublishError) as err:
         fail(ctx, str(err), code=1)
+    publish.save(root / pipeline.PUBLISHED, done)
     if ctx.obj["output"] == "json":
         emit_json({"ok": True, "published": done})
     else:
@@ -755,6 +756,85 @@ def pipeline_summary(ctx: click.Context, root: Path) -> None:
         emit_json({"ok": not failed, "stages": list(results.values())})
         return
     click.echo(pipeline.summary(results), nl=False)
+
+
+def _unreachable(err: platform_api.PlatformError) -> bool:
+    """No answer, or the platform's own failure: the pipeline goes on without the report."""
+    return err.status is None or err.status >= 500
+
+
+@pipeline_group.command(name="report")
+@click.option("--path", "root", type=click.Path(path_type=Path, file_okay=False), default=".", help="Repo root (default: current directory).")
+@click.option("--deployment", is_flag=True, help="Report the deploy stage's deployments instead of the build.")
+@click.option("--repo", default="", help="OWNER/NAME. Default: GITHUB_REPOSITORY, else the origin remote.")
+@click.option("--commit", default="", help="The commit the run built. Default: GITHUB_SHA, else HEAD.")
+@click.option("--branch", default="", help="Default: GITHUB_HEAD_REF, else GITHUB_REF_NAME, else the checked-out branch.")
+@click.option("--deploy-env", default="", help="Environment, when the deploy stage didn't record one. Default: RLP_DEPLOY_ENV.")
+@click.option("--component", "-c", "components", multiple=True, help="Only these components' deployments (repeatable, or comma-separated).")
+@output_option
+@click.pass_context
+def pipeline_report_cmd(ctx: click.Context, root: Path, deployment: bool, repo: str, commit: str, branch: str, deploy_env: str, components: tuple[str, ...]) -> None:
+    """Send this run's gate results (or its deployments) to the rlp platform.
+
+    The build is .rlp/pipeline/results.json plus what `rlp publish` pushed;
+    reporting the same run attempt (GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT) again
+    updates the same build. With no platform configured this does nothing and
+    exits 0; when the platform can't be reached it warns and exits 0, so a
+    pipeline never fails for want of a report.
+    """
+    json_mode = ctx.obj["output"] == "json"
+
+    def done(message: str, **payload) -> None:
+        if json_mode:
+            emit_json({"ok": True, **payload, "message": message})
+        else:
+            click.echo(message)
+        ctx.exit(0)
+
+    def warn(message: str) -> None:
+        if json_mode:
+            emit_json({"ok": True, "reported": False, "warning": message})
+        else:
+            click.echo(f"warning: {message}", err=True)
+        ctx.exit(0)
+
+    try:
+        config = platform_api.load_config()
+    except platform_api.ConfigError as err:
+        warn(f"{err}; nothing reported")
+    if not config.url or not config.token:
+        done(f"no platform configured ({platform_api.URL_ENV} and {platform_api.TOKEN_ENV} are unset); nothing reported", reported=False)
+    try:
+        run = pipeline_report.resolve_run(root, repo=repo, commit=commit, branch=branch)
+        if deployment:
+            bodies = pipeline_report.deployments(root, run, deploy_env=deploy_env, only=split_components(components))
+        else:
+            body = pipeline_report.build(root, run)
+            bodies = [body] if body is not None else []
+    except pipeline_report.ReportError as err:
+        fail(ctx, str(err))
+    if not bodies:
+        what = "no deploy stage ran" if deployment else f"no {pipeline.RESULTS.as_posix()} and nothing published"
+        done(f"{what}; nothing reported", reported=False)
+    try:
+        with platform_api.PlatformClient.from_config(config, transport=ctx.obj.get("platform_transport")) as client:
+            if deployment:
+                recorded = [client.report_deployment(b) for b in bodies]
+            else:
+                recorded = [client.report_build(bodies[0])]
+    except platform_api.PlatformError as err:
+        if _unreachable(err):
+            warn(f"{err}; nothing reported")
+        fail(ctx, str(err), code=1)
+    if json_mode:
+        emit_json({"ok": True, "reported": True, ("deployments" if deployment else "build"): recorded if deployment else recorded[0]})
+        return
+    for r in recorded:
+        if deployment:
+            click.echo(f"deployment {r['id']}: {r['repo']} {r['component']} to {r['environment']}: {r['status']} ({r['artifact']['reference']})")
+        else:
+            failed = f" (failed: {', '.join(r['failed_stages'])})" if r["failed_stages"] else ""
+            click.echo(f"build {r['id']}: {r['repo']}@{r['commit'][:12]} run {r['run_id']} attempt {r['run_attempt']}: {'passed' if r['passed'] else 'failed'}{failed}")
 
 
 @pipeline_group.command(name="gate-review")
