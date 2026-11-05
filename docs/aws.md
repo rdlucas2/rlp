@@ -7,7 +7,7 @@ A `container-service` component runs on ECS Fargate behind an Application Load B
 | Piece | Where | Who runs it | How often |
 | --- | --- | --- | --- |
 | Bootstrap: state bucket, GitHub OIDC provider, `rlp-plan` and `rlp-deploy` roles | `infra/bootstrap` | an administrator, by hand | once per AWS account |
-| Platform: shared ECS cluster, load balancer, HTTP listener | `infra/platform` | an administrator, by hand | once per environment |
+| Platform: shared ECS cluster, load balancer, HTTP listener; optionally an HTTPS listener, certificate and Cognito sign-in for public hosts | `infra/platform` | an administrator, by hand | once per environment |
 | App stack: one `container-service` module per component | rendered by `rlp infra render` into `.rlp/infra/<env>/` | the golden pipeline | every run with `deploy-env` |
 
 The platform stack publishes what app stacks need (cluster, listener, subnets, load balancer) as SSM parameters under `/rlp/<env>/platform/`. App stacks read them there, so they never touch the platform's state.
@@ -37,7 +37,7 @@ Terraform never sees a secret value: it creates the empty secrets and the task r
 
 Every resource carries the `rlp:project`, `rlp:environment`, `rlp:managed-by` and `rlp:repo` tags through the provider's default tags. The deploy role may only change resources tagged `rlp:managed-by = rlp`.
 
-There is no DNS or TLS yet. Clients reach a service at the load balancer's DNS name with the service's host in the `Host` header; the deploy stage does the same.
+Clients reach a service at the load balancer's DNS name with the service's host in the `Host` header; the deploy stage does the same. To give a component a real DNS name over HTTPS, see [Public hosts](#public-hosts-https-and-sign-in).
 
 ## Set up an account
 
@@ -168,9 +168,79 @@ rlp infra destroy --env dev                    # tear the app stack down
 
 By default the modules come from the same rlp as your CLI: a release install uses its version's tag, an install from a git commit (`pip install "rlp-cli @ git+https://github.com/rdlucas2/rlp@<ref>"`) uses that commit, and an install from a checkout uses the checkout's `infra/modules`. `--modules <dir or go-getter URL>` (or `RLP_MODULES_SOURCE`) overrides it.
 
+## Public hosts: HTTPS and sign-in
+
+The platform stack can serve a component under a real DNS name, such as `rlp.example.com`, over HTTPS, optionally behind a sign-in. DNS stays wherever your domain lives (a registrar such as Squarespace, Cloudflare, Route 53): rlp needs no hosted zone, and you create two kinds of CNAME record there yourself.
+
+Give the platform stack the hosts, and who may sign in, in `infra/platform/terraform.tfvars` (gitignored):
+
+```hcl
+environment = "dev"
+region      = "us-east-2"
+
+public_hosts = {
+  "rlp.example.com" = {
+    repo         = "rlp"      # metadata.name of the rlp.yaml
+    component    = "platform"
+    authenticate = true       # the default
+    # Reached without signing in, by clients with their own credentials:
+    # the CLI and pipeline (bearer token) and the GitHub webhook (signature).
+    open_paths = ["/api/*", "/healthz"]
+  }
+}
+
+auth_users = ["you@example.com"]
+```
+
+For each public host the platform stack adds:
+
+| What | Why |
+| --- | --- |
+| an ACM certificate covering every public host, validated by DNS | TLS on the load balancer |
+| an HTTPS listener on 443 (TLS 1.2 and 1.3) and a 443 ingress rule for `allowed_cidrs` | the public host is served there |
+| a rule on the HTTP listener that redirects the host to HTTPS | the public host is HTTPS only |
+| with `authenticate = true`: a Cognito user pool with sign-up closed, its hosted sign-in domain and an app client for the load balancer, and a user per `auth_users` entry | the load balancer signs people in before it forwards a request |
+| SSM parameters under `/rlp/<env>/platform/` and `/rlp/<env>/public/<repo>/<component>` | the component's stack finds the listener, the user pool and its host there |
+
+The component's stack (the `container-service` module, through the golden pipeline) then adds, on its next deploy:
+
+- a rule on the HTTPS listener for the public host, which runs the Cognito sign-in first when `authenticate = true`;
+- before it, a rule that forwards the component's health path and `open_paths` without sign-in;
+- with `authenticate = true`, it narrows the internal host's rule on the HTTP listener (`<component>-<repo>.<env>.<domain>`) to those same open paths, so the UI can't be reached around the sign-in. The deploy stage's readiness check and `RLP_PLATFORM_HOST` clients keep working; a hosts-file entry for the internal host no longer reaches the UI.
+
+The sign-in is in front of what the component already does: the platform's API still needs its bearer token, and the UI still asks for it once per browser session.
+
+### Set it up
+
+1. Re-apply `infra/bootstrap` with your usual variables: the deploy role needs `cognito-idp:DescribeUserPoolClient` (on rlp-tagged user pools) to create a rule with a sign-in.
+2. Create the certificate on its own, then read the records that prove you own the names:
+
+   ```sh
+   cd infra/platform
+   terraform apply -target=aws_acm_certificate.this
+   terraform output certificate_validation_records
+   ```
+
+3. At your DNS provider, create each validation record as a CNAME. Most providers want the host relative to the domain: for `_3f2a….rlp.example.com.` on `example.com`, the host is `_3f2a….rlp`. In Squarespace: **Domains**, the domain, **DNS** (DNS Settings), **Custom records**, **Add record**, type CNAME, host as above, data the record's value.
+4. Apply the rest. The apply waits until ACM has issued the certificate (usually minutes after the record resolves; up to 2 hours before it gives up):
+
+   ```sh
+   terraform apply
+   terraform output dns_records
+   ```
+
+5. Point each public host at the load balancer: a CNAME from the host (`rlp` for `rlp.example.com`) to the load balancer's DNS name in `dns_records`. A CNAME can't sit at the domain's apex, so a public host is always a subdomain unless your DNS provider offers ALIAS or flattening.
+6. Re-run the component's pipeline (or `rlp infra` locally) so its stack adds the public rules. The output `public_url` of its module names the host.
+7. Each `auth_users` address gets an email from Cognito with a temporary password. Open the public host, sign in, set a password, and optionally set up an authenticator app (MFA is optional per user). Add more users later with `auth_users`, or with `aws cognito-idp admin-create-user --user-pool-id <auth_user_pool_id> --username <email>`.
+
+For the platform itself, point GitHub's webhook at `https://<public host>/api/v1/hooks/github` and set `RLP_PLATFORM_URL=https://<public host>` (no `RLP_PLATFORM_HOST` needed).
+
+The certificate renews on its own as long as the validation records stay in place. Cognito's built-in email sender is limited to a few dozen messages a day, enough for invitations and password resets for a handful of users.
+
 ## Not yet
 
-- DNS names and HTTPS (Route 53 and ACM).
+- Route 53 hosted zones (rlp creates no DNS records; see [Public hosts](#public-hosts-https-and-sign-in)).
+- Public hosts declared in `rlp.yaml`: for now the platform stack's `public_hosts` maps them.
 - RDS for `postgres`, and AWS mappings for redis, s3, sqs and sns.
 - Lambda, S3 + CloudFront and scheduled ECS tasks.
 - Per-component CPU, memory and task count in `rlp.yaml`.

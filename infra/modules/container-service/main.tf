@@ -9,6 +9,12 @@
 #   secret: true                -> empty Secrets Manager secret an operator fills
 #   from: service:<name>        -> bring-your-own Secrets Manager secret (S0)
 # Terraform never holds a secret value: it creates the containers only.
+#
+# Public hosts: when the platform stack maps a real DNS name to this component
+# (/rlp/<environment>/public/<repo>/<component>), the component is also served
+# on the platform's HTTPS listener under that name, behind Cognito sign-in when
+# asked. A signed-in component's internal host then forwards only its open
+# paths (API, health), so the UI can't be reached around the sign-in.
 
 locals {
   name     = "${var.environment}-${var.repo}-${var.component}"
@@ -50,6 +56,37 @@ data "aws_ssm_parameter" "platform" {
   for_each = toset(["cluster_arn", "listener_arn", "alb_dns_name", "alb_security_group_id", "vpc_id", "subnet_ids", "domain"])
 
   name = "${local.platform}/${each.key}"
+}
+
+# Optional platform values (HTTPS listener, sign-in) and this repo's public
+# hosts. Read by path, so an environment without them still plans.
+data "aws_ssm_parameters_by_path" "platform_optional" {
+  path = local.platform
+}
+
+data "aws_ssm_parameters_by_path" "public" {
+  path = "/rlp/${var.environment}/public/${var.repo}"
+}
+
+locals {
+  optional = {
+    for i, n in data.aws_ssm_parameters_by_path.platform_optional.names :
+    basename(n) => nonsensitive(data.aws_ssm_parameters_by_path.platform_optional.values)[i]
+  }
+  public_names = data.aws_ssm_parameters_by_path.public.names
+  exposure = try(jsondecode(
+    nonsensitive(data.aws_ssm_parameters_by_path.public.values)[index(local.public_names, "/rlp/${var.environment}/public/${var.repo}/${var.component}")]
+  ), null)
+
+  https_listener_arn = lookup(local.optional, "https_listener_arn", "")
+  exposed            = local.exposure != null && local.https_listener_arn != ""
+  public_host        = local.exposed ? local.exposure.host : ""
+  authenticate       = local.exposed && try(local.exposure.authenticate, false)
+  # What a signed-in component still serves without sign-in: its health path
+  # and the platform's open_paths for it (machines with their own credentials).
+  open_paths = local.authenticate ? distinct(concat([var.health_path], try(local.exposure.open_paths, []))) : []
+  # Two adjacent priorities on the HTTPS listener: open paths before sign-in.
+  https_priority = parseint(substr(md5(local.name), 4, 4), 16) % 24000 * 2 + 1000
 }
 
 # --- config and secrets ---
@@ -206,6 +243,88 @@ resource "aws_lb_listener_rule" "this" {
       values = [local.host]
     }
   }
+
+  # Behind sign-in on its public host: the internal host keeps only the open paths.
+  dynamic "condition" {
+    for_each = local.authenticate ? [1] : []
+
+    content {
+      path_pattern {
+        values = local.open_paths
+      }
+    }
+  }
+}
+
+# The open paths on the public host skip sign-in.
+resource "aws_lb_listener_rule" "public_open" {
+  count = local.authenticate ? 1 : 0
+
+  listener_arn = local.https_listener_arn
+  priority     = local.https_priority
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.this.arn
+  }
+
+  condition {
+    host_header {
+      values = [local.public_host]
+    }
+  }
+
+  condition {
+    path_pattern {
+      values = local.open_paths
+    }
+  }
+}
+
+# Everything else on the public host, after Cognito sign-in when asked.
+resource "aws_lb_listener_rule" "public" {
+  count = local.exposed ? 1 : 0
+
+  listener_arn = local.https_listener_arn
+  priority     = local.https_priority + 1
+
+  dynamic "action" {
+    for_each = local.authenticate ? [1] : []
+
+    content {
+      type  = "authenticate-cognito"
+      order = 1
+
+      authenticate_cognito {
+        user_pool_arn              = lookup(local.optional, "auth_user_pool_arn", "")
+        user_pool_client_id        = lookup(local.optional, "auth_user_pool_client_id", "")
+        user_pool_domain           = lookup(local.optional, "auth_user_pool_domain", "")
+        session_timeout            = tonumber(lookup(local.optional, "auth_session_timeout", "43200"))
+        on_unauthenticated_request = "authenticate"
+        scope                      = "openid email"
+      }
+    }
+  }
+
+  action {
+    type             = "forward"
+    order            = local.authenticate ? 2 : 1
+    target_group_arn = aws_lb_target_group.this.arn
+  }
+
+  condition {
+    host_header {
+      values = [local.public_host]
+    }
+  }
+
+  lifecycle {
+    # Never serve a host openly that the platform says needs sign-in.
+    precondition {
+      condition     = !local.authenticate || lookup(local.optional, "auth_user_pool_arn", "") != ""
+      error_message = "The platform marks ${local.public_host} authenticate = true but publishes no Cognito user pool; re-apply infra/platform."
+    }
+  }
 }
 
 # --- task and service ---
@@ -278,5 +397,5 @@ resource "aws_ecs_service" "this" {
     container_port   = var.port
   }
 
-  depends_on = [aws_lb_listener_rule.this]
+  depends_on = [aws_lb_listener_rule.this, aws_lb_listener_rule.public_open, aws_lb_listener_rule.public]
 }
