@@ -32,3 +32,13 @@ output "unset_parameters" {
   description = "SSM parameters created with a placeholder, by env var."
   value       = { for k, p in aws_ssm_parameter.unset : k => p.name }
 }
+
+output "public_url" {
+  description = "HTTPS URL of the component's public host, or null when the platform gives it none."
+  value       = local.exposed ? "https://${local.public_host}" : null
+}
+
+output "authenticated" {
+  description = "Whether the public host puts Cognito sign-in in front of the component."
+  value       = local.authenticate
+}

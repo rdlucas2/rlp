@@ -345,6 +345,20 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
 
+  # A listener rule with an authenticate-cognito action needs the caller to
+  # read the platform's app client. Only rlp-tagged user pools.
+  statement {
+    sid       = "SignInClients"
+    actions   = ["cognito-idp:DescribeUserPoolClient"]
+    resources = ["arn:${local.partition}:cognito-idp:*:${local.account}:userpool/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/rlp:managed-by"
+      values   = ["rlp"]
+    }
+  }
+
   # Task definitions have no resource-level permissions for these.
   statement {
     sid       = "TaskDefinitions"
