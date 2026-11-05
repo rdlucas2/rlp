@@ -23,6 +23,8 @@ reports/
 *.tfstate
 *.tfstate.*
 *.tfplan
+# Per-environment values (hosts, emails): keep them out of the repo.
+*.tfvars
 crash.log
 
 # act
